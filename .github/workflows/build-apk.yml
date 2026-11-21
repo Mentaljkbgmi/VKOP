@@ -12,43 +12,36 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
-      - name: Set up Flutter
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          cache: true
 
-      - name: Create Android project
-        run: flutter create --org com.vkop --project-name ai --platforms android app
-
-      - name: Set VKOP app name
+      - name: Create Flutter project
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
+          flutter create --org com.vkop --project-name ai --platforms android app
 
-          p = Path("app/android/app/src/main/AndroidManifest.xml")
-          s = p.read_text()
-          s = re.sub(r'android:label="[^"]*"', 'android:label="VKOP"', s, count=1)
-          p.write_text(s)
-          assert 'android:label="VKOP"' in s
-          print("VKOP app name configured")
-          PY
+      - name: Set Android app name
+        run: |
+          sed -i 's/android:label="ai"/android:label="VKOP"/' app/android/app/src/main/AndroidManifest.xml
 
-      - name: Add video dependencies
+      - name: Install packages
         working-directory: app
         run: |
           flutter pub add file_picker
           flutter pub add video_player
 
-      - name: Create VKOP video preview app
+      - name: Create VKOP Editor
+        working-directory: app
         run: |
-          cat > app/lib/main.dart <<'EOF'
+          cat > lib/main.dart <<'EOF'
           import 'dart:io';
           import 'package:flutter/material.dart';
           import 'package:file_picker/file_picker.dart';
@@ -56,6 +49,19 @@ jobs:
 
           void main() {
             runApp(const VKOPApp());
+          }
+
+          class VideoClip {
+            final String path;
+            final String name;
+            double trimStart = 0;
+            double trimEnd = 0;
+            double duration = 0;
+
+            VideoClip({
+              required this.path,
+              required this.name,
+            });
           }
 
           class VKOPApp extends StatelessWidget {
@@ -66,371 +72,641 @@ jobs:
               return MaterialApp(
                 debugShowCheckedModeBanner: false,
                 title: 'VKOP',
-                theme: ThemeData.dark().copyWith(
-                  scaffoldBackgroundColor: const Color(0xFF101018),
+                theme: ThemeData(
+                  brightness: Brightness.dark,
+                  scaffoldBackgroundColor: const Color(0xFF101014),
                   colorScheme: ColorScheme.fromSeed(
-                    seedColor: Colors.deepPurpleAccent,
+                    seedColor: Colors.deepPurple,
                     brightness: Brightness.dark,
                   ),
+                  useMaterial3: true,
                 ),
-                home: const HomeScreen(),
+                home: const EditorPage(),
               );
             }
           }
 
-          class HomeScreen extends StatefulWidget {
-            const HomeScreen({super.key});
+          class EditorPage extends StatefulWidget {
+            const EditorPage({super.key});
 
             @override
-            State<HomeScreen> createState() => _HomeScreenState();
+            State<EditorPage> createState() => _EditorPageState();
           }
 
-          class _HomeScreenState extends State<HomeScreen> {
-            String? selectedPath;
-            String? selectedName;
-            bool selecting = false;
+          class _EditorPageState extends State<EditorPage> {
+            final List<VideoClip> clips = [];
 
-            Future<void> selectVideo() async {
-              setState(() => selecting = true);
+            VideoPlayerController? controller;
 
+            int selectedIndex = -1;
+            int loadToken = 0;
+            bool loading = false;
+
+            String cropRatio = 'Original';
+
+            double get maxDuration {
+              if (selectedIndex < 0 ||
+                  selectedIndex >= clips.length) {
+                return 1;
+              }
+
+              return clips[selectedIndex].duration > 0
+                  ? clips[selectedIndex].duration
+                  : 1;
+            }
+
+            Future<void> pickVideos() async {
               try {
-                final files = await FilePicker.pickFiles(
+                final result = await FilePicker.pickFiles(
                   type: FileType.video,
+                  allowMultiple: true,
                 );
 
-                if (!mounted) return;
+                if (result == null || result.files.isEmpty) {
+                  return;
+                }
 
-                if (files.isNotEmpty) {
-                  final file = files.first;
+                final newClips = result.files
+                    .where((file) => file.path != null)
+                    .map((file) => VideoClip(
+                          path: file.path!,
+                          name: file.name,
+                        ))
+                    .toList();
 
-                  if (file.path == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Please select a video stored on your device.'),
-                      ),
-                    );
-                  } else {
-                    setState(() {
-                      selectedPath = file.path;
-                      selectedName = file.name;
-                    });
-                  }
+                if (newClips.isEmpty) return;
+
+                setState(() {
+                  clips.addAll(newClips);
+                });
+
+                if (selectedIndex == -1) {
+                  await selectClip(0);
                 }
               } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Video selection failed: $e')),
+                showMessage('Unable to select videos: $e');
+              }
+            }
+
+            Future<void> selectClip(int index) async {
+              if (index < 0 || index >= clips.length) return;
+
+              final token = ++loadToken;
+
+              final oldController = controller;
+              controller = null;
+
+              if (mounted) {
+                setState(() {
+                  selectedIndex = index;
+                  loading = true;
+                });
+              }
+
+              if (oldController != null) {
+                await oldController.dispose();
+              }
+
+              try {
+                final clip = clips[index];
+
+                final newController =
+                    VideoPlayerController.file(File(clip.path));
+
+                await newController.initialize();
+
+                if (!mounted || token != loadToken) {
+                  await newController.dispose();
+                  return;
+                }
+
+                clip.duration =
+                    newController.value.duration.inMilliseconds / 1000;
+
+                if (clip.trimEnd <= 0 ||
+                    clip.trimEnd > clip.duration) {
+                  clip.trimEnd = clip.duration;
+                }
+
+                controller = newController;
+
+                await newController.setLooping(true);
+
+                if (clip.trimStart > 0) {
+                  await newController.seekTo(
+                    Duration(
+                      milliseconds:
+                          (clip.trimStart * 1000).round(),
+                    ),
                   );
                 }
-              } finally {
-                if (mounted) {
-                  setState(() => selecting = false);
-                }
-              }
-            }
 
-            void importVideo() {
-              if (selectedPath == null) return;
-
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => VideoPreviewScreen(
-                    videoPath: selectedPath!,
-                    videoName: selectedName ?? 'Selected video',
-                  ),
-                ),
-              );
-            }
-
-            @override
-            Widget build(BuildContext context) {
-              return Scaffold(
-                appBar: AppBar(
-                  title: const Text(
-                    'VKOP',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 3,
-                    ),
-                  ),
-                  centerTitle: true,
-                ),
-                body: Center(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(
-                          Icons.auto_awesome,
-                          size: 75,
-                          color: Colors.deepPurpleAccent,
-                        ),
-                        const SizedBox(height: 20),
-                        const Text(
-                          'Remove. Replace. Create.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        const Text(
-                          'AI VIDEO BACKGROUND REMOVER',
-                          style: TextStyle(
-                            color: Colors.white54,
-                            letterSpacing: 2,
-                            fontSize: 11,
-                          ),
-                        ),
-                        const SizedBox(height: 55),
-                        const Icon(
-                          Icons.video_library_outlined,
-                          size: 65,
-                          color: Colors.deepPurpleAccent,
-                        ),
-                        const SizedBox(height: 20),
-                        const Text(
-                          'Choose a video to get started',
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 20),
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton.icon(
-                            onPressed: selecting ? null : selectVideo,
-                            icon: const Icon(Icons.video_file),
-                            label: Text(
-                              selecting ? 'PLEASE WAIT...' : 'SELECT VIDEO',
-                            ),
-                          ),
-                        ),
-                        if (selectedName != null) ...[
-                          const SizedBox(height: 20),
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: Colors.white10,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.movie,
-                                  color: Colors.deepPurpleAccent,
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    selectedName!,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 18),
-                          SizedBox(
-                            width: double.infinity,
-                            child: FilledButton.icon(
-                              onPressed: importVideo,
-                              icon: const Icon(Icons.download_done),
-                              label: const Text('IMPORT VIDEO'),
-                            ),
-                          ),
-                        ],
-                        const SizedBox(height: 55),
-                        const Text(
-                          'FREE  •  OFFLINE  •  NO WATERMARK',
-                          style: TextStyle(
-                            color: Colors.white38,
-                            fontSize: 10,
-                            letterSpacing: 1,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            }
-          }
-
-          class VideoPreviewScreen extends StatefulWidget {
-            final String videoPath;
-            final String videoName;
-
-            const VideoPreviewScreen({
-              super.key,
-              required this.videoPath,
-              required this.videoName,
-            });
-
-            @override
-            State<VideoPreviewScreen> createState() =>
-                _VideoPreviewScreenState();
-          }
-
-          class _VideoPreviewScreenState
-              extends State<VideoPreviewScreen> {
-            late final VideoPlayerController controller;
-            bool loading = true;
-            String? errorMessage;
-
-            @override
-            void initState() {
-              super.initState();
-              controller = VideoPlayerController.file(
-                File(widget.videoPath),
-              );
-              initializeVideo();
-            }
-
-            Future<void> initializeVideo() async {
-              try {
-                await controller.initialize();
-                await controller.setLooping(false);
-                if (mounted) {
-                  setState(() => loading = false);
-                }
-              } catch (e) {
-                if (mounted) {
+                if (mounted && token == loadToken) {
                   setState(() {
                     loading = false;
-                    errorMessage = 'Unable to play this video: $e';
                   });
+                }
+              } catch (e) {
+                if (mounted && token == loadToken) {
+                  setState(() {
+                    loading = false;
+                  });
+                  showMessage('Video could not be opened: $e');
                 }
               }
             }
 
-            String formatTime(Duration duration) {
-              final minutes = duration.inMinutes;
-              final seconds = duration.inSeconds % 60;
-              return '$minutes:${seconds.toString().padLeft(2, '0')}';
+            Future<void> removeClip(int index) async {
+              if (index < 0 || index >= clips.length) return;
+
+              final wasSelected = index == selectedIndex;
+
+              if (wasSelected) {
+                final oldController = controller;
+                controller = null;
+                ++loadToken;
+
+                if (oldController != null) {
+                  await oldController.dispose();
+                }
+              }
+
+              setState(() {
+                clips.removeAt(index);
+
+                if (clips.isEmpty) {
+                  selectedIndex = -1;
+                } else if (index < selectedIndex) {
+                  selectedIndex--;
+                } else if (wasSelected) {
+                  selectedIndex =
+                      index >= clips.length ? clips.length - 1 : index;
+                }
+              });
+
+              if (clips.isNotEmpty &&
+                  (wasSelected || selectedIndex >= 0)) {
+                await selectClip(selectedIndex);
+              }
+            }
+
+            Future<void> togglePlayback() async {
+              final c = controller;
+              if (c == null || !c.value.isInitialized) return;
+
+              final clip = clips[selectedIndex];
+
+              if (c.value.isPlaying) {
+                await c.pause();
+              } else {
+                final position =
+                    c.value.position.inMilliseconds / 1000;
+
+                if (position < clip.trimStart ||
+                    position >= clip.trimEnd) {
+                  await c.seekTo(
+                    Duration(
+                      milliseconds:
+                          (clip.trimStart * 1000).round(),
+                    ),
+                  );
+                }
+
+                await c.play();
+              }
+
+              if (mounted) setState(() {});
+            }
+
+            void updateTrim(RangeValues values) {
+              if (selectedIndex < 0) return;
+
+              setState(() {
+                final clip = clips[selectedIndex];
+                clip.trimStart = values.start;
+                clip.trimEnd = values.end;
+              });
+            }
+
+            double get cropAspectRatio {
+              switch (cropRatio) {
+                case '9:16':
+                  return 9 / 16;
+                case '16:9':
+                  return 16 / 9;
+                case '1:1':
+                  return 1;
+                default:
+                  return controller?.value.aspectRatio ?? 16 / 9;
+              }
+            }
+
+            void showMessage(String message) {
+              if (!mounted) return;
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(message)),
+              );
+            }
+
+            String formatTime(double seconds) {
+              final total = seconds.floor();
+              final minutes = total ~/ 60;
+              final secs = total % 60;
+
+              return '${minutes.toString().padLeft(2, '0')}:'
+                  '${secs.toString().padLeft(2, '0')}';
             }
 
             @override
             void dispose() {
-              controller.dispose();
+              controller?.dispose();
               super.dispose();
             }
 
             @override
             Widget build(BuildContext context) {
+              final clip = selectedIndex >= 0 &&
+                      selectedIndex < clips.length
+                  ? clips[selectedIndex]
+                  : null;
+
               return Scaffold(
                 appBar: AppBar(
-                  title: const Text('VIDEO PREVIEW'),
-                  centerTitle: true,
+                  title: const Text(
+                    'VKOP EDITOR',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                  actions: [
+                    IconButton(
+                      onPressed: pickVideos,
+                      icon: const Icon(Icons.add_circle_outline),
+                      tooltip: 'Add videos',
+                    ),
+                  ],
                 ),
-                body: SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      children: [
-                        Text(
-                          widget.videoName,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-                        Expanded(
-                          child: Center(
-                            child: loading
-                                ? const CircularProgressIndicator()
-                                : errorMessage != null
-                                    ? Text(
-                                        errorMessage!,
-                                        textAlign: TextAlign.center,
-                                      )
-                                    : AspectRatio(
-                                        aspectRatio:
-                                            controller.value.aspectRatio,
-                                        child: VideoPlayer(controller),
-                                      ),
-                          ),
-                        ),
-                        if (!loading && errorMessage == null)
-                          ValueListenableBuilder<VideoPlayerValue>(
-                            valueListenable: controller,
-                            builder: (context, value, child) {
-                              final total =
-                                  value.duration.inMilliseconds.toDouble();
-                              final current = value
-                                  .position.inMilliseconds
-                                  .toDouble()
-                                  .clamp(0.0, total > 0 ? total : 1.0);
 
-                              return Column(
-                                children: [
-                                  Row(
-                                    children: [
-                                      Text(formatTime(value.position)),
-                                      Expanded(
-                                        child: Slider(
-                                          value: current,
-                                          min: 0,
-                                          max: total > 0 ? total : 1,
-                                          onChanged: total > 0
-                                              ? (v) {
-                                                  controller.seekTo(
-                                                    Duration(
-                                                      milliseconds: v.round(),
-                                                    ),
-                                                  );
-                                                }
-                                              : null,
-                                        ),
-                                      ),
-                                      Text(formatTime(value.duration)),
-                                    ],
+                body: SafeArea(
+                  child: Column(
+                    children: [
+                      Expanded(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.all(14),
+                          child: Column(
+                            crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'PREVIEW',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 1.5,
+                                ),
+                              ),
+
+                              const SizedBox(height: 12),
+
+                              Container(
+                                width: double.infinity,
+                                height: 300,
+                                decoration: BoxDecoration(
+                                  color: Colors.black,
+                                  borderRadius:
+                                      BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: Colors.white12,
                                   ),
-                                  IconButton.filled(
-                                    iconSize: 36,
-                                    onPressed: () {
-                                      if (value.isPlaying) {
-                                        controller.pause();
-                                      } else {
-                                        controller.play();
-                                      }
-                                    },
-                                    icon: Icon(
-                                      value.isPlaying
-                                          ? Icons.pause
-                                          : Icons.play_arrow,
+                                ),
+                                child: Center(
+                                  child: loading
+                                      ? const CircularProgressIndicator()
+                                      : controller != null &&
+                                              controller!.value.isInitialized
+                                          ? ClipRect(
+                                              child: AspectRatio(
+                                                aspectRatio:
+                                                    cropAspectRatio,
+                                                child: FittedBox(
+                                                  fit: BoxFit.cover,
+                                                  child: SizedBox(
+                                                    width: controller!
+                                                        .value.size.width,
+                                                    height: controller!
+                                                        .value.size.height,
+                                                    child: VideoPlayer(
+                                                      controller!,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            )
+                                          : const Column(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                Icon(
+                                                  Icons.movie_outlined,
+                                                  size: 55,
+                                                  color: Colors.white38,
+                                                ),
+                                                SizedBox(height: 10),
+                                                Text('Select videos to start'),
+                                              ],
+                                            ),
+                                ),
+                              ),
+
+                              const SizedBox(height: 12),
+
+                              Center(
+                                child: IconButton.filled(
+                                  onPressed: controller == null
+                                      ? null
+                                      : togglePlayback,
+                                  iconSize: 32,
+                                  icon: Icon(
+                                    controller?.value.isPlaying == true
+                                        ? Icons.pause
+                                        : Icons.play_arrow,
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(height: 20),
+
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text(
+                                    'TIMELINE',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 1.5,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${clips.length} clips',
+                                    style: const TextStyle(
+                                      color: Colors.white54,
                                     ),
                                   ),
                                 ],
-                              );
-                            },
-                          ),
-                        const SizedBox(height: 20),
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton.icon(
-                            onPressed: () => Navigator.pop(context),
-                            icon: const Icon(Icons.swap_horiz),
-                            label: const Text('CHANGE VIDEO'),
+                              ),
+
+                              const SizedBox(height: 10),
+
+                              if (clips.isEmpty)
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(25),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF1C1C24),
+                                    borderRadius:
+                                        BorderRadius.circular(12),
+                                  ),
+                                  child: const Text(
+                                    'Tap + to select multiple videos',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: Colors.white54,
+                                    ),
+                                  ),
+                                )
+                              else
+                                SizedBox(
+                                  height: 112,
+                                  child: ListView.builder(
+                                    scrollDirection: Axis.horizontal,
+                                    itemCount: clips.length,
+                                    itemBuilder: (context, index) {
+                                      final item = clips[index];
+                                      final isSelected =
+                                          index == selectedIndex;
+
+                                      return GestureDetector(
+                                        onTap: () => selectClip(index),
+                                        child: Container(
+                                          width: 155,
+                                          margin: const EdgeInsets.only(
+                                            right: 10,
+                                          ),
+                                          padding:
+                                              const EdgeInsets.all(10),
+                                          decoration: BoxDecoration(
+                                            color: isSelected
+                                                ? Colors.deepPurple
+                                                    .withOpacity(0.35)
+                                                : const Color(0xFF24242D),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                            border: Border.all(
+                                              color: isSelected
+                                                  ? Colors.deepPurpleAccent
+                                                  : Colors.white12,
+                                              width: isSelected ? 2 : 1,
+                                            ),
+                                          ),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  const Icon(
+                                                    Icons.video_file,
+                                                    size: 18,
+                                                  ),
+                                                  const Spacer(),
+                                                  GestureDetector(
+                                                    onTap: () =>
+                                                        removeClip(index),
+                                                    child: const Icon(
+                                                      Icons.close,
+                                                      color: Colors.redAccent,
+                                                      size: 20,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              const Spacer(),
+                                              Text(
+                                                item.name,
+                                                maxLines: 2,
+                                                overflow:
+                                                    TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                item.duration > 0
+                                                    ? formatTime(
+                                                        item.duration)
+                                                    : 'Video',
+                                                style: const TextStyle(
+                                                  fontSize: 10,
+                                                  color: Colors.white54,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+
+                              const SizedBox(height: 22),
+
+                              const Text(
+                                'TRIM SELECTED CLIP',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 1.2,
+                                ),
+                              ),
+
+                              const SizedBox(height: 8),
+
+                              if (clip != null &&
+                                  clip.duration > 0)
+                                Column(
+                                  children: [
+                                    RangeSlider(
+                                      min: 0,
+                                      max: maxDuration,
+                                      values: RangeValues(
+                                        clip.trimStart.clamp(
+                                          0,
+                                          maxDuration,
+                                        ),
+                                        clip.trimEnd.clamp(
+                                          0,
+                                          maxDuration,
+                                        ),
+                                      ),
+                                      onChanged: (values) {
+                                        if (values.end -
+                                                values.start <
+                                            0.1) {
+                                          return;
+                                        }
+                                        updateTrim(values);
+                                      },
+                                    ),
+
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(
+                                          'IN: ${formatTime(clip.trimStart)}',
+                                          style: const TextStyle(
+                                            color: Colors.white70,
+                                          ),
+                                        ),
+                                        Text(
+                                          'OUT: ${formatTime(clip.trimEnd)}',
+                                          style: const TextStyle(
+                                            color: Colors.white70,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                )
+                              else
+                                const Text(
+                                  'Select a video to adjust trim points.',
+                                  style: TextStyle(
+                                    color: Colors.white54,
+                                  ),
+                                ),
+
+                              const SizedBox(height: 22),
+
+                              const Text(
+                                'CROP RATIO',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 1.2,
+                                ),
+                              ),
+
+                              const SizedBox(height: 10),
+
+                              Wrap(
+                                spacing: 8,
+                                children: [
+                                  'Original',
+                                  '9:16',
+                                  '16:9',
+                                  '1:1',
+                                ].map((ratio) {
+                                  return ChoiceChip(
+                                    label: Text(ratio),
+                                    selected: cropRatio == ratio,
+                                    onSelected: (_) {
+                                      setState(() {
+                                        cropRatio = ratio;
+                                      });
+                                    },
+                                  );
+                                }).toList(),
+                              ),
+
+                              const SizedBox(height: 22),
+
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF20202A),
+                                  borderRadius:
+                                      BorderRadius.circular(12),
+                                ),
+                                child: const Text(
+                                  'VKOP EDITOR: Trim and crop settings are '
+                                  'currently stored for editing. Final video '
+                                  'export and AI background removal will be '
+                                  'added in the next development stage.',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.white60,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: null,
-                            icon: const Icon(Icons.auto_awesome),
-                            label: const Text('REMOVE BACKGROUND - COMING NEXT'),
+                      ),
+
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF1A1A22),
+                          border: Border(
+                            top: BorderSide(color: Colors.white12),
                           ),
                         ),
-                      ],
-                    ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: pickVideos,
+                                icon: const Icon(Icons.add),
+                                label: const Text('Add Videos'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               );
@@ -441,23 +717,12 @@ jobs:
       - name: Build APK
         working-directory: app
         run: |
-          set -o pipefail
           flutter pub get
-          flutter build apk --release --verbose 2>&1 | tee build-log.txt
-
-      - name: Upload Build Error Log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: VKOP-Build-Log
-          path: app/build-log.txt
-          if-no-files-found: ignore
-          retention-days: 3
+          flutter build apk --release
 
       - name: Upload APK
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: VKOP-Android-APK
           path: app/build/app/outputs/flutter-apk/app-release.apk
-          retention-days: 3
+          if-no-files-found: error
