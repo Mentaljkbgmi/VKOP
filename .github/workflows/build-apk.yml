@@ -36,20 +36,23 @@ jobs:
           s = p.read_text()
           s = re.sub(r'android:label="[^"]*"', 'android:label="VKOP"', s, count=1)
           p.write_text(s)
-
           assert 'android:label="VKOP"' in s
           print("VKOP app name configured")
           PY
 
-      - name: Add video picker dependency
+      - name: Add video dependencies
         working-directory: app
-        run: flutter pub add file_picker
+        run: |
+          flutter pub add file_picker
+          flutter pub add video_player
 
-      - name: Create VKOP video import screen
+      - name: Create VKOP video preview app
         run: |
           cat > app/lib/main.dart <<'EOF'
+          import 'dart:io';
           import 'package:flutter/material.dart';
           import 'package:file_picker/file_picker.dart';
+          import 'package:video_player/video_player.dart';
 
           void main() {
             runApp(const VKOPApp());
@@ -83,9 +86,13 @@ jobs:
           }
 
           class _HomeScreenState extends State<HomeScreen> {
-            String videoName = 'No video selected';
+            String? selectedPath;
+            String? selectedName;
+            bool selecting = false;
 
-            Future<void> pickVideo() async {
+            Future<void> selectVideo() async {
+              setState(() => selecting = true);
+
               try {
                 final files = await FilePicker.pickFiles(
                   type: FileType.video,
@@ -94,17 +101,46 @@ jobs:
                 if (!mounted) return;
 
                 if (files.isNotEmpty) {
-                  setState(() {
-                    videoName = files.first.name;
-                  });
+                  final file = files.first;
+
+                  if (file.path == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Please select a video stored on your device.'),
+                      ),
+                    );
+                  } else {
+                    setState(() {
+                      selectedPath = file.path;
+                      selectedName = file.name;
+                    });
+                  }
                 }
               } catch (e) {
-                if (!mounted) return;
-
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Unable to select video: $e')),
-                );
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Video selection failed: $e')),
+                  );
+                }
+              } finally {
+                if (mounted) {
+                  setState(() => selecting = false);
+                }
               }
+            }
+
+            void importVideo() {
+              if (selectedPath == null) return;
+
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => VideoPreviewScreen(
+                    videoPath: selectedPath!,
+                    videoName: selectedName ?? 'Selected video',
+                  ),
+                ),
+              );
             }
 
             @override
@@ -149,36 +185,248 @@ jobs:
                             fontSize: 11,
                           ),
                         ),
-                        const SizedBox(height: 45),
+                        const SizedBox(height: 55),
                         const Icon(
                           Icons.video_library_outlined,
                           size: 65,
                           color: Colors.deepPurpleAccent,
                         ),
                         const SizedBox(height: 20),
-                        const Text('Choose your video'),
+                        const Text(
+                          'Choose a video to get started',
+                          textAlign: TextAlign.center,
+                        ),
                         const SizedBox(height: 20),
                         SizedBox(
                           width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: pickVideo,
-                            icon: const Icon(Icons.add),
-                            label: const Text('IMPORT VIDEO'),
+                          child: OutlinedButton.icon(
+                            onPressed: selecting ? null : selectVideo,
+                            icon: const Icon(Icons.video_file),
+                            label: Text(
+                              selecting ? 'PLEASE WAIT...' : 'SELECT VIDEO',
+                            ),
                           ),
                         ),
-                        const SizedBox(height: 25),
-                        Text(
-                          videoName,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.white70),
-                        ),
-                        const SizedBox(height: 45),
+                        if (selectedName != null) ...[
+                          const SizedBox(height: 20),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: Colors.white10,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.movie,
+                                  color: Colors.deepPurpleAccent,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    selectedName!,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton.icon(
+                              onPressed: importVideo,
+                              icon: const Icon(Icons.download_done),
+                              label: const Text('IMPORT VIDEO'),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 55),
                         const Text(
                           'FREE  •  OFFLINE  •  NO WATERMARK',
                           style: TextStyle(
                             color: Colors.white38,
                             fontSize: 10,
                             letterSpacing: 1,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+          }
+
+          class VideoPreviewScreen extends StatefulWidget {
+            final String videoPath;
+            final String videoName;
+
+            const VideoPreviewScreen({
+              super.key,
+              required this.videoPath,
+              required this.videoName,
+            });
+
+            @override
+            State<VideoPreviewScreen> createState() =>
+                _VideoPreviewScreenState();
+          }
+
+          class _VideoPreviewScreenState
+              extends State<VideoPreviewScreen> {
+            late final VideoPlayerController controller;
+            bool loading = true;
+            String? errorMessage;
+
+            @override
+            void initState() {
+              super.initState();
+              controller = VideoPlayerController.file(
+                File(widget.videoPath),
+              );
+              initializeVideo();
+            }
+
+            Future<void> initializeVideo() async {
+              try {
+                await controller.initialize();
+                await controller.setLooping(false);
+                if (mounted) {
+                  setState(() => loading = false);
+                }
+              } catch (e) {
+                if (mounted) {
+                  setState(() {
+                    loading = false;
+                    errorMessage = 'Unable to play this video: $e';
+                  });
+                }
+              }
+            }
+
+            String formatTime(Duration duration) {
+              final minutes = duration.inMinutes;
+              final seconds = duration.inSeconds % 60;
+              return '$minutes:${seconds.toString().padLeft(2, '0')}';
+            }
+
+            @override
+            void dispose() {
+              controller.dispose();
+              super.dispose();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(
+                  title: const Text('VIDEO PREVIEW'),
+                  centerTitle: true,
+                ),
+                body: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      children: [
+                        Text(
+                          widget.videoName,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        Expanded(
+                          child: Center(
+                            child: loading
+                                ? const CircularProgressIndicator()
+                                : errorMessage != null
+                                    ? Text(
+                                        errorMessage!,
+                                        textAlign: TextAlign.center,
+                                      )
+                                    : AspectRatio(
+                                        aspectRatio:
+                                            controller.value.aspectRatio,
+                                        child: VideoPlayer(controller),
+                                      ),
+                          ),
+                        ),
+                        if (!loading && errorMessage == null)
+                          ValueListenableBuilder<VideoPlayerValue>(
+                            valueListenable: controller,
+                            builder: (context, value, child) {
+                              final total =
+                                  value.duration.inMilliseconds.toDouble();
+                              final current = value
+                                  .position.inMilliseconds
+                                  .toDouble()
+                                  .clamp(0.0, total > 0 ? total : 1.0);
+
+                              return Column(
+                                children: [
+                                  Row(
+                                    children: [
+                                      Text(formatTime(value.position)),
+                                      Expanded(
+                                        child: Slider(
+                                          value: current,
+                                          min: 0,
+                                          max: total > 0 ? total : 1,
+                                          onChanged: total > 0
+                                              ? (v) {
+                                                  controller.seekTo(
+                                                    Duration(
+                                                      milliseconds: v.round(),
+                                                    ),
+                                                  );
+                                                }
+                                              : null,
+                                        ),
+                                      ),
+                                      Text(formatTime(value.duration)),
+                                    ],
+                                  ),
+                                  IconButton.filled(
+                                    iconSize: 36,
+                                    onPressed: () {
+                                      if (value.isPlaying) {
+                                        controller.pause();
+                                      } else {
+                                        controller.play();
+                                      }
+                                    },
+                                    icon: Icon(
+                                      value.isPlaying
+                                          ? Icons.pause
+                                          : Icons.play_arrow,
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                        const SizedBox(height: 20),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: () => Navigator.pop(context),
+                            icon: const Icon(Icons.swap_horiz),
+                            label: const Text('CHANGE VIDEO'),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: null,
+                            icon: const Icon(Icons.auto_awesome),
+                            label: const Text('REMOVE BACKGROUND - COMING NEXT'),
                           ),
                         ),
                       ],
