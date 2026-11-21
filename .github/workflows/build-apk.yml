@@ -27,8 +27,19 @@ jobs:
         
       - name: Set VKOP app name
         run: |
-          sed -i 's/<string>app<\/string>/<string>VKOP<\/string>/' app/android/app/src/main/AndroidManifest.xml
-          sed -i 's/android:label="app"/android:label="VKOP"/' app/android/app/src/main/AndroidManifest.xml
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("app/android/app/src/main/AndroidManifest.xml")
+          s = p.read_text()
+          s = s.replace('android:label="ai"', 'android:label="VKOP"')
+          s = s.replace('android:label="app"', 'android:label="VKOP"')
+          p.write_text(s)
+
+          assert 'android:label="VKOP"' in s, "VKOP app label was not set!"
+          print("Launcher name successfully set to VKOP")
+          PY
+
           
       - name: Build APK
         working-directory: app
