@@ -24,7 +24,12 @@ jobs:
 
       - name: Create Android project
         run: flutter create --org com.vkop --project-name ai --platforms android app
-
+        
+      - name: Set VKOP app name
+        run: |
+          sed -i 's/<string>app<\/string>/<string>VKOP<\/string>/' app/android/app/src/main/AndroidManifest.xml
+          sed -i 's/android:label="app"/android:label="VKOP"/' app/android/app/src/main/AndroidManifest.xml
+          
       - name: Build APK
         working-directory: app
         run: flutter build apk --release
