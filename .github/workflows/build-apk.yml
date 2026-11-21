@@ -115,38 +115,40 @@ jobs:
                   : 1;
             }
 
-            Future<void> pickVideos() async {
-              try {
-                final result = await FilePicker.pickFiles(
-                  type: FileType.video,
-                  allowMultiple: true,
-                );
+            
+Future<void> pickVideos() async {
+  try {
+    final files = await FilePicker.pickFiles(
+      type: FileType.video,
+    );
 
-                if (result == null || result.files.isEmpty) {
-                  return;
-                }
+    // Empty list means user cancelled selection
+    if (files.isEmpty) {
+      return;
+    }
 
-                final newClips = result.files
-                    .where((file) => file.path != null)
-                    .map((file) => VideoClip(
-                          path: file.path!,
-                          name: file.name,
-                        ))
-                    .toList();
+    final newClips = files
+        .where((file) => file.path != null)
+        .map((file) => VideoClip(
+              path: file.path!,
+              name: file.name,
+            ))
+        .toList();
 
-                if (newClips.isEmpty) return;
+    if (newClips.isEmpty) return;
 
-                setState(() {
-                  clips.addAll(newClips);
-                });
+    setState(() {
+      clips.addAll(newClips);
+    });
 
-                if (selectedIndex == -1) {
-                  await selectClip(0);
-                }
-              } catch (e) {
-                showMessage('Unable to select videos: $e');
-              }
-            }
+    // Automatically open editor after selection
+    if (selectedIndex == -1) {
+      await selectClip(0);
+    }
+  } catch (e) {
+    showMessage('Unable to select videos: $e');
+  }
+}
 
             Future<void> selectClip(int index) async {
               if (index < 0 || index >= clips.length) return;
