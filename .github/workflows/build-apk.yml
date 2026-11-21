@@ -1,3 +1,4 @@
+
 name: Build VKOP Android APK
 
 on:
@@ -24,24 +25,22 @@ jobs:
 
       - name: Create Android project
         run: flutter create --org com.vkop --project-name ai --platforms android app
-        
+
       - name: Set VKOP app name
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           p = Path("app/android/app/src/main/AndroidManifest.xml")
           s = p.read_text()
-          s = s.replace('android:label="ai"', 'android:label="VKOP"')
-          s = s.replace('android:label="app"', 'android:label="VKOP"')
+          s = re.sub(r'android:label="[^"]*"', 'android:label="VKOP"', s, count=1)
           p.write_text(s)
 
-          assert 'android:label="VKOP"' in s, "VKOP app label was not set!"
-          print("Launcher name successfully set to VKOP")
+          assert 'android:label="VKOP"' in s
+          print("VKOP app name configured")
           PY
 
-          
-      
       - name: Add video picker dependency
         working-directory: app
         run: flutter pub add file_picker
@@ -52,7 +51,9 @@ jobs:
           import 'package:flutter/material.dart';
           import 'package:file_picker/file_picker.dart';
 
-          void main() => runApp(const VKOPApp());
+          void main() {
+            runApp(const VKOPApp());
+          }
 
           class VKOPApp extends StatelessWidget {
             const VKOPApp({super.key});
@@ -85,14 +86,24 @@ jobs:
             String videoName = 'No video selected';
 
             Future<void> pickVideo() async {
-              final result = await FilePicker.platform.pickFiles(
-                type: FileType.video,
-              );
+              try {
+                final files = await FilePicker.pickFiles(
+                  type: FileType.video,
+                );
 
-              if (result != null && result.files.isNotEmpty) {
-                setState(() {
-                  videoName = result.files.first.name;
-                });
+                if (!mounted) return;
+
+                if (files.isNotEmpty) {
+                  setState(() {
+                    videoName = files.first.name;
+                  });
+                }
+              } catch (e) {
+                if (!mounted) return;
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Unable to select video: $e')),
+                );
               }
             }
 
@@ -110,7 +121,7 @@ jobs:
                   centerTitle: true,
                 ),
                 body: Center(
-                  child: Padding(
+                  child: SingleChildScrollView(
                     padding: const EdgeInsets.all(24),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -179,14 +190,12 @@ jobs:
           }
           EOF
 
-      
       - name: Build APK
         working-directory: app
         run: |
-          flutter clean
+          set -o pipefail
           flutter pub get
           flutter build apk --release --verbose 2>&1 | tee build-log.txt
-
 
       - name: Upload Build Error Log
         if: always()
@@ -195,13 +204,12 @@ jobs:
           name: VKOP-Build-Log
           path: app/build-log.txt
           if-no-files-found: ignore
-
-
+          retention-days: 3
 
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: VKOP-Android-APK
           path: app/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 3
-          
