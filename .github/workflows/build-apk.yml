@@ -179,9 +179,23 @@ jobs:
           }
           EOF
 
+      
       - name: Build APK
         working-directory: app
-        run: flutter build apk --release
+        run: |
+          flutter clean
+          flutter pub get
+          flutter build apk --release --verbose 2>&1 | tee build-log.txt
+
+
+      - name: Upload Build Error Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VKOP-Build-Log
+          path: app/build-log.txt
+          if-no-files-found: ignore
+
 
 
       - name: Upload APK
