@@ -206,7 +206,7 @@ jobs:
               toast('Clip split into two timeline segments.');
             }
           
-            Future<void> chooseAudio() async { try { final r = await FilePicker.pickFiles(type: FileType.audio); if (r.isEmpty || r.files.first.path == null) return; setState(() => audioName = r.files.first.name); toast('Audio selected. Audio mixing/export will be connected in the export engine step.'); } catch (e) { toast('Could not select audio: $e'); } }
+            Future<void> chooseAudio() async { try { final r = await FilePicker.pickFiles(type: FileType.audio); if (r.isEmpty || r.files.path == null) return; setState(() => audioName = r.files.name); toast('Audio selected. Audio mixing/export will be connected in the export engine step.'); } catch (e) { toast('Could not select audio: $e'); } }
             Future<void> addMedia() async { try { final r = await FilePicker.pickFiles(type: FileType.media); if (r.isEmpty) return; final additions=<MediaClip>[]; const vids={'mp4','m4v','mov','3gp','3gpp','mkv','webm','avi','ts','mts','m2ts','mpg','mpeg','wmv','flv','ogv'}; const imgs={'jpg','jpeg','png','webp','gif','bmp','heic','heif','avif','tif','tiff'}; for(final f in r){ if(f.path==null) continue; final ext=(f.extension??'').toLowerCase(); final v=vids.contains(ext); if(v||imgs.contains(ext)) additions.add(MediaClip(path:f.path!,name:f.name,isVideo:v)); } if(additions.isNotEmpty){ setState(()=>clips.addAll(additions)); toast('${additions.length} items added.'); } } catch(e){toast('Could not add media: $e');} }
           
             Widget preview() {
