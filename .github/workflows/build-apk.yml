@@ -40,6 +40,7 @@ jobs:
         working-directory: app
         run: |
           cat > lib/main.dart <<'EOF'
+          import 'dart:async';
           import 'dart:io';
           import 'package:flutter/material.dart';
           import 'package:file_picker/file_picker.dart';
@@ -48,6 +49,7 @@ jobs:
           void main() => runApp(const VKOPApp());
 
           class MediaClip {
+            final Object id = Object();
             final String path;
             final String name;
             final bool isVideo;
@@ -86,6 +88,7 @@ jobs:
 
           class EditorPage extends StatefulWidget {
             const EditorPage({super.key});
+
             @override
             State<EditorPage> createState() => _EditorPageState();
           }
@@ -95,7 +98,10 @@ jobs:
             VideoPlayerController? controller;
             int selectedIndex = -1;
             int loadToken = 0;
+            int sequenceToken = 0;
             bool loading = false;
+            bool sequencePlaying = false;
+            Timer? sequenceTimer;
             String cropRatio = 'Original';
 
             MediaClip? get selectedClip =>
@@ -105,9 +111,12 @@ jobs:
 
             double get cropAspectRatio {
               switch (cropRatio) {
-                case '9:16': return 9 / 16;
-                case '16:9': return 16 / 9;
-                case '1:1': return 1;
+                case '9:16':
+                  return 9 / 16;
+                case '16:9':
+                  return 16 / 9;
+                case '1:1':
+                  return 1;
                 default:
                   if (controller != null && controller!.value.isInitialized) {
                     return controller!.value.aspectRatio;
@@ -118,8 +127,6 @@ jobs:
 
             Future<void> pickMedia() async {
               try {
-                // FileType.media opens the Android picker for images AND videos.
-                // In file_picker 13.x, multiple selection is enabled by default.
                 final files = await FilePicker.pickFiles(type: FileType.media);
                 if (files.isEmpty) return;
 
@@ -128,13 +135,13 @@ jobs:
                   if (file.path == null) continue;
                   final ext = file.extension?.toLowerCase() ?? '';
                   const videoExt = {
-                    'mp4', 'm4v', 'mov', '3gp', '3gpp', 'mkv',
-                    'webm', 'avi', 'ts', 'mts', 'm2ts', 'mpg',
-                    'mpeg', 'mpe', 'mpv', 'wmv', 'flv', 'ogv'
+                    'mp4', 'm4v', 'mov', '3gp', '3gpp', 'mkv', 'webm', 'avi',
+                    'ts', 'mts', 'm2ts', 'mpg', 'mpeg', 'mpe', 'mpv', 'wmv',
+                    'flv', 'ogv'
                   };
                   const imageExt = {
-                    'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp',
-                    'wbmp', 'heic', 'heif', 'avif', 'tif', 'tiff'
+                    'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'wbmp',
+                    'heic', 'heif', 'avif', 'tif', 'tiff'
                   };
                   final isVideo = videoExt.contains(ext);
                   final isImage = imageExt.contains(ext);
@@ -164,8 +171,18 @@ jobs:
               }
             }
 
+            void stopSequence({bool updateUi = true}) {
+              sequencePlaying = false;
+              sequenceToken++;
+              sequenceTimer?.cancel();
+              sequenceTimer = null;
+              controller?.pause();
+              if (updateUi && mounted) setState(() {});
+            }
+
             Future<void> selectClip(int index) async {
               if (index < 0 || index >= clips.length) return;
+              stopSequence(updateUi: false);
               final token = ++loadToken;
               final old = controller;
               controller = null;
@@ -176,6 +193,7 @@ jobs:
               });
 
               if (old != null) await old.dispose();
+              if (!mounted || token != loadToken) return;
 
               final item = clips[index];
               if (!item.isVideo) {
@@ -195,7 +213,7 @@ jobs:
                   item.trimEnd = item.duration;
                 }
                 controller = next;
-                await next.setLooping(true);
+                await next.setLooping(false);
                 if (item.trimStart > 0) {
                   await next.seekTo(Duration(
                     milliseconds: (item.trimStart * 1000).round(),
@@ -212,8 +230,116 @@ jobs:
               }
             }
 
+            Future<void> playSequence() async {
+              if (clips.isEmpty) return;
+              sequencePlaying = true;
+              final start = selectedIndex >= 0 ? selectedIndex : 0;
+              await playSequenceClip(start);
+            }
+
+            Future<void> playSequenceClip(int index) async {
+              if (!sequencePlaying || !mounted) return;
+              sequenceTimer?.cancel();
+              sequenceTimer = null;
+              final token = ++sequenceToken;
+
+              if (index >= clips.length) {
+                sequencePlaying = false;
+                if (mounted) setState(() {});
+                return;
+              }
+
+              final old = controller;
+              controller = null;
+              if (old != null) await old.dispose();
+              if (!mounted || token != sequenceToken || !sequencePlaying) return;
+
+              final item = clips[index];
+              setState(() {
+                selectedIndex = index;
+                loading = item.isVideo;
+              });
+
+              if (!item.isVideo) {
+                setState(() => loading = false);
+                sequenceTimer = Timer(const Duration(seconds: 3), () {
+                  if (sequencePlaying && token == sequenceToken) {
+                    playSequenceClip(index + 1);
+                  }
+                });
+                return;
+              }
+
+              try {
+                final next = VideoPlayerController.file(File(item.path));
+                await next.initialize();
+                if (!mounted || token != sequenceToken || !sequencePlaying) {
+                  await next.dispose();
+                  return;
+                }
+                item.duration = next.value.duration.inMilliseconds / 1000;
+                if (item.trimEnd <= 0 || item.trimEnd > item.duration) {
+                  item.trimEnd = item.duration;
+                }
+                controller = next;
+                await next.setLooping(false);
+                await next.seekTo(Duration(
+                  milliseconds: (item.trimStart * 1000).round(),
+                ));
+                await next.play();
+                if (mounted && token == sequenceToken) {
+                  setState(() => loading = false);
+                }
+
+                sequenceTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+                  if (!mounted || token != sequenceToken || !sequencePlaying) {
+                    timer.cancel();
+                    return;
+                  }
+                  final current = controller;
+                  if (current == null || !current.value.isInitialized) return;
+                  final endMs = (item.trimEnd * 1000).round();
+                  if (current.value.position.inMilliseconds >= endMs ||
+                      (!current.value.isPlaying &&
+                          current.value.position.inMilliseconds >= endMs - 150)) {
+                    timer.cancel();
+                    playSequenceClip(index + 1);
+                  }
+                });
+              } catch (e) {
+                if (mounted && token == sequenceToken) {
+                  setState(() => loading = false);
+                  showMessage('Could not play ${item.name}: $e');
+                  playSequenceClip(index + 1);
+                }
+              }
+            }
+
+            void toggleSequence() {
+              if (sequencePlaying) {
+                stopSequence();
+              } else {
+                playSequence();
+              }
+            }
+
+            void reorderClips(int oldIndex, int newIndex) {
+              if (oldIndex < 0 || oldIndex >= clips.length) return;
+              if (newIndex > oldIndex) newIndex--;
+              if (newIndex < 0 || newIndex >= clips.length) return;
+              if (sequencePlaying) stopSequence(updateUi: false);
+
+              final selected = selectedClip;
+              setState(() {
+                final moved = clips.removeAt(oldIndex);
+                clips.insert(newIndex, moved);
+                selectedIndex = selected == null ? -1 : clips.indexOf(selected);
+              });
+            }
+
             Future<void> removeClip(int index) async {
               if (index < 0 || index >= clips.length) return;
+              if (sequencePlaying) stopSequence(updateUi: false);
               final wasSelected = index == selectedIndex;
               final old = wasSelected ? controller : null;
               if (wasSelected) {
@@ -240,24 +366,6 @@ jobs:
               }
             }
 
-            Future<void> togglePlayback() async {
-              final c = controller;
-              final item = selectedClip;
-              if (c == null || item == null || !c.value.isInitialized) return;
-              if (c.value.isPlaying) {
-                await c.pause();
-              } else {
-                final pos = c.value.position.inMilliseconds / 1000;
-                if (pos < item.trimStart || pos >= item.trimEnd) {
-                  await c.seekTo(Duration(
-                    milliseconds: (item.trimStart * 1000).round(),
-                  ));
-                }
-                await c.play();
-              }
-              if (mounted) setState(() {});
-            }
-
             void updateTrim(RangeValues values) {
               final item = selectedClip;
               if (item == null) return;
@@ -282,6 +390,7 @@ jobs:
 
             @override
             void dispose() {
+              sequenceTimer?.cancel();
               controller?.dispose();
               super.dispose();
             }
@@ -329,6 +438,104 @@ jobs:
               );
             }
 
+            Widget buildTimeline() {
+              if (clips.isEmpty) {
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(25),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1C1C24),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Text(
+                    'Tap + to add photos, videos or GIFs',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                );
+              }
+
+              return SizedBox(
+                height: 116,
+                child: ReorderableListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  buildDefaultDragHandles: false,
+                  itemCount: clips.length,
+                  onReorder: reorderClips,
+                  itemBuilder: (context, index) {
+                    final media = clips[index];
+                    final active = index == selectedIndex;
+                    return ReorderableDelayedDragStartListener(
+                      key: ValueKey(media.id),
+                      index: index,
+                      child: GestureDetector(
+                        onTap: () => selectClip(index),
+                        child: Container(
+                          width: 155,
+                          margin: const EdgeInsets.only(right: 10),
+                          padding: const EdgeInsets.all(9),
+                          decoration: BoxDecoration(
+                            color: active
+                                ? Colors.deepPurple.withOpacity(0.35)
+                                : const Color(0xFF24242D),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: active ? Colors.deepPurpleAccent : Colors.white12,
+                              width: active ? 2 : 1,
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(children: [
+                                Icon(
+                                  media.isVideo ? Icons.video_file : Icons.image,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 5),
+                                const Expanded(
+                                  child: Text('HOLD & DRAG',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(fontSize: 8, color: Colors.white54)),
+                                ),
+                                GestureDetector(
+                                  onTap: () => removeClip(index),
+                                  child: const Icon(Icons.close,
+                                    color: Colors.redAccent, size: 20),
+                                ),
+                              ]),
+                              const Spacer(),
+                              Text(
+                                media.name,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                media.isVideo
+                                    ? (media.duration > 0
+                                        ? formatTime(media.duration)
+                                        : 'Video')
+                                    : (media.name.toLowerCase().endsWith('.gif')
+                                        ? 'GIF'
+                                        : 'Photo'),
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.white54,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              );
+            }
+
             @override
             Widget build(BuildContext context) {
               final item = selectedClip;
@@ -342,7 +549,7 @@ jobs:
                     IconButton(
                       onPressed: pickMedia,
                       icon: const Icon(Icons.add_circle_outline),
-                      tooltip: 'Add photos and videos',
+                      tooltip: 'Add photos, videos and GIFs',
                     ),
                   ],
                 ),
@@ -371,12 +578,18 @@ jobs:
                               ),
                               const SizedBox(height: 10),
                               Center(
-                                child: IconButton.filled(
-                                  onPressed: item?.isVideo == true && controller != null
-                                      ? togglePlayback : null,
-                                  iconSize: 32,
-                                  icon: Icon(controller?.value.isPlaying == true
-                                      ? Icons.pause : Icons.play_arrow),
+                                child: Column(
+                                  children: [
+                                    IconButton.filled(
+                                      onPressed: clips.isEmpty ? null : toggleSequence,
+                                      iconSize: 32,
+                                      icon: Icon(sequencePlaying
+                                          ? Icons.pause
+                                          : Icons.play_arrow),
+                                    ),
+                                    const Text('PLAY FULL TIMELINE',
+                                      style: TextStyle(fontSize: 10, color: Colors.white54)),
+                                  ],
                                 ),
                               ),
                               const SizedBox(height: 18),
@@ -390,80 +603,7 @@ jobs:
                                 ],
                               ),
                               const SizedBox(height: 10),
-                              if (clips.isEmpty)
-                                Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.all(25),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF1C1C24),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: const Text(
-                                    'Tap + to add multiple photos and videos',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(color: Colors.white54),
-                                  ),
-                                )
-                              else
-                                SizedBox(
-                                  height: 112,
-                                  child: ListView.builder(
-                                    scrollDirection: Axis.horizontal,
-                                    itemCount: clips.length,
-                                    itemBuilder: (context, index) {
-                                      final media = clips[index];
-                                      final active = index == selectedIndex;
-                                      return GestureDetector(
-                                        onTap: () => selectClip(index),
-                                        child: Container(
-                                          width: 155,
-                                          margin: const EdgeInsets.only(right: 10),
-                                          padding: const EdgeInsets.all(9),
-                                          decoration: BoxDecoration(
-                                            color: active
-                                                ? Colors.deepPurple.withOpacity(0.35)
-                                                : const Color(0xFF24242D),
-                                            borderRadius: BorderRadius.circular(12),
-                                            border: Border.all(
-                                              color: active
-                                                  ? Colors.deepPurpleAccent
-                                                  : Colors.white12,
-                                              width: active ? 2 : 1,
-                                            ),
-                                          ),
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Row(children: [
-                                                Icon(media.isVideo
-                                                    ? Icons.video_file : Icons.image,
-                                                    size: 18),
-                                                const Spacer(),
-                                                GestureDetector(
-                                                  onTap: () => removeClip(index),
-                                                  child: const Icon(Icons.close,
-                                                    color: Colors.redAccent, size: 20),
-                                                ),
-                                              ]),
-                                              const Spacer(),
-                                              Text(media.name, maxLines: 2,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: const TextStyle(fontSize: 12)),
-                                              const SizedBox(height: 3),
-                                              Text(media.isVideo
-                                                  ? (media.duration > 0
-                                                      ? formatTime(media.duration)
-                                                      : 'Video')
-                                                  : 'Photo',
-                                                style: const TextStyle(
-                                                  fontSize: 10, color: Colors.white54)),
-                                            ],
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ),
+                              buildTimeline(),
                               const SizedBox(height: 22),
                               const Text('TRIM SELECTED VIDEO', style: TextStyle(
                                 fontWeight: FontWeight.bold, letterSpacing: 1.2)),
@@ -515,10 +655,10 @@ jobs:
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: const Text(
-                                  'Photos and videos can be added to the timeline. '
-                                  'Trim and crop controls are editing previews only; '
-                                  'final export and AI background removal are not '
-                                  'implemented yet.',
+                                  'Drag and hold timeline clips to change their order. '
+                                  'Play Full Timeline previews each photo/GIF for 3 seconds '
+                                  'and plays videos using the selected trim range. '
+                                  'Final video export is the next development step.',
                                   style: TextStyle(fontSize: 12, color: Colors.white60),
                                 ),
                               ),
@@ -537,7 +677,7 @@ jobs:
                           child: OutlinedButton.icon(
                             onPressed: pickMedia,
                             icon: const Icon(Icons.add),
-                            label: const Text('Add Photos / Videos'),
+                            label: const Text('Add Photos / Videos / GIFs'),
                           ),
                         ),
                       ),
