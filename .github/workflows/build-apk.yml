@@ -1,6 +1,9 @@
-                                              Text(media.name, maxLines: 2,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: const TextStyle(fontSize: 12)),
+Text(
+  media.name,
+  maxLines: 2,
+  overflow: TextOverflow.ellipsis,
+  style: const TextStyle(fontSize: 12),
+),
                                               const SizedBox(height: 3),
                                               Text(media.isVideo
                                                   ? (media.duration > 0
