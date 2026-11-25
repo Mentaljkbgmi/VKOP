@@ -115,40 +115,39 @@ jobs:
                   : 1;
             }
 
-            
-Future<void> pickVideos() async {
-  try {
-    final files = await FilePicker.pickFiles(
-      type: FileType.video,
-    );
+            // Pick multiple videos. In file_picker 13.x,
+            // pickFiles returns a List<PlatformFile>.
+            Future<void> pickVideos() async {
+              try {
+                final files = await FilePicker.pickFiles(
+                  type: FileType.video,
+                );
 
-    // Empty list means user cancelled selection
-    if (files.isEmpty) {
-      return;
-    }
+                if (files.isEmpty) return;
 
-    final newClips = files
-        .where((file) => file.path != null)
-        .map((file) => VideoClip(
-              path: file.path!,
-              name: file.name,
-            ))
-        .toList();
+                final newClips = files
+                    .where((file) => file.path != null)
+                    .map((file) => VideoClip(
+                          path: file.path!,
+                          name: file.name,
+                        ))
+                    .toList();
 
-    if (newClips.isEmpty) return;
+                if (newClips.isEmpty) return;
 
-    setState(() {
-      clips.addAll(newClips);
-    });
+                final firstIndex = clips.length;
 
-    // Automatically open editor after selection
-    if (selectedIndex == -1) {
-      await selectClip(0);
-    }
-  } catch (e) {
-    showMessage('Unable to select videos: $e');
-  }
-}
+                setState(() {
+                  clips.addAll(newClips);
+                });
+
+                if (selectedIndex == -1) {
+                  await selectClip(firstIndex);
+                }
+              } catch (e) {
+                showMessage('Unable to select videos: $e');
+              }
+            }
 
             Future<void> selectClip(int index) async {
               if (index < 0 || index >= clips.length) return;
@@ -247,14 +246,19 @@ Future<void> pickVideos() async {
               });
 
               if (clips.isNotEmpty &&
-                  (wasSelected || selectedIndex >= 0)) {
+                  (wasSelected || index < selectedIndex)) {
                 await selectClip(selectedIndex);
               }
             }
 
             Future<void> togglePlayback() async {
               final c = controller;
-              if (c == null || !c.value.isInitialized) return;
+
+              if (c == null ||
+                  !c.value.isInitialized ||
+                  selectedIndex < 0) {
+                return;
+              }
 
               final clip = clips[selectedIndex];
 
@@ -350,7 +354,6 @@ Future<void> pickVideos() async {
                     ),
                   ],
                 ),
-
                 body: SafeArea(
                   child: Column(
                     children: [
@@ -583,14 +586,12 @@ Future<void> pickVideos() async {
                                       min: 0,
                                       max: maxDuration,
                                       values: RangeValues(
-                                        clip.trimStart.clamp(
-                                          0,
-                                          maxDuration,
-                                        ),
-                                        clip.trimEnd.clamp(
-                                          0,
-                                          maxDuration,
-                                        ),
+                                        clip.trimStart
+                                            .clamp(0, maxDuration)
+                                            .toDouble(),
+                                        clip.trimEnd
+                                            .clamp(0, maxDuration)
+                                            .toDouble(),
                                       ),
                                       onChanged: (values) {
                                         if (values.end -
@@ -601,7 +602,6 @@ Future<void> pickVideos() async {
                                         updateTrim(values);
                                       },
                                     ),
-
                                     Row(
                                       mainAxisAlignment:
                                           MainAxisAlignment.spaceBetween,
