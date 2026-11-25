@@ -1,9 +1,454 @@
-Text(
-  media.name,
-  maxLines: 2,
-  overflow: TextOverflow.ellipsis,
-  style: const TextStyle(fontSize: 12),
-),
+name: Build VKOP Android APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create Flutter project
+        run: flutter create --org com.vkop --project-name ai --platforms android app
+
+      - name: Set Android app name
+        run: |
+          sed -i 's/android:label="ai"/android:label="VKOP"/' app/android/app/src/main/AndroidManifest.xml
+
+      - name: Install packages
+        working-directory: app
+        run: |
+          flutter pub add file_picker
+          flutter pub add video_player
+
+      - name: Create VKOP Editor
+        working-directory: app
+        run: |
+          cat > lib/main.dart <<'EOF'
+          import 'dart:io';
+          import 'package:flutter/material.dart';
+          import 'package:file_picker/file_picker.dart';
+          import 'package:video_player/video_player.dart';
+
+          void main() => runApp(const VKOPApp());
+
+          class MediaClip {
+            final String path;
+            final String name;
+            final bool isVideo;
+            double duration = 0;
+            double trimStart = 0;
+            double trimEnd = 0;
+
+            MediaClip({
+              required this.path,
+              required this.name,
+              required this.isVideo,
+            });
+          }
+
+          class VKOPApp extends StatelessWidget {
+            const VKOPApp({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                debugShowCheckedModeBanner: false,
+                title: 'VKOP',
+                theme: ThemeData(
+                  brightness: Brightness.dark,
+                  scaffoldBackgroundColor: const Color(0xFF101014),
+                  colorScheme: ColorScheme.fromSeed(
+                    seedColor: Colors.deepPurple,
+                    brightness: Brightness.dark,
+                  ),
+                  useMaterial3: true,
+                ),
+                home: const EditorPage(),
+              );
+            }
+          }
+
+          class EditorPage extends StatefulWidget {
+            const EditorPage({super.key});
+            @override
+            State<EditorPage> createState() => _EditorPageState();
+          }
+
+          class _EditorPageState extends State<EditorPage> {
+            final List<MediaClip> clips = [];
+            VideoPlayerController? controller;
+            int selectedIndex = -1;
+            int loadToken = 0;
+            bool loading = false;
+            String cropRatio = 'Original';
+
+            MediaClip? get selectedClip =>
+                selectedIndex >= 0 && selectedIndex < clips.length
+                    ? clips[selectedIndex]
+                    : null;
+
+            double get cropAspectRatio {
+              switch (cropRatio) {
+                case '9:16': return 9 / 16;
+                case '16:9': return 16 / 9;
+                case '1:1': return 1;
+                default:
+                  if (controller != null && controller!.value.isInitialized) {
+                    return controller!.value.aspectRatio;
+                  }
+                  return 16 / 9;
+              }
+            }
+
+            Future<void> pickMedia() async {
+              try {
+                // FileType.media opens the Android picker for images AND videos.
+                // In file_picker 13.x, multiple selection is enabled by default.
+                final files = await FilePicker.pickFiles(type: FileType.media);
+                if (files.isEmpty) return;
+
+                final newItems = <MediaClip>[];
+                for (final file in files) {
+                  if (file.path == null) continue;
+                  final ext = file.extension?.toLowerCase() ?? '';
+                  const videoExt = {
+                    'mp4', 'm4v', 'mov', '3gp', '3gpp', 'mkv',
+                    'webm', 'avi', 'ts', 'mts', 'm2ts', 'mpg',
+                    'mpeg', 'mpe', 'mpv', 'wmv', 'flv', 'ogv'
+                  };
+                  const imageExt = {
+                    'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp',
+                    'wbmp', 'heic', 'heif', 'avif', 'tif', 'tiff'
+                  };
+                  final isVideo = videoExt.contains(ext);
+                  final isImage = imageExt.contains(ext);
+                  if (!isVideo && !isImage) continue;
+
+                  newItems.add(MediaClip(
+                    path: file.path!,
+                    name: file.name,
+                    isVideo: isVideo,
+                  ));
+                }
+
+                if (newItems.isEmpty) {
+                  showMessage('No supported photo or video files were selected.');
+                  return;
+                }
+
+                final firstNewIndex = clips.length;
+                setState(() => clips.addAll(newItems));
+                if (selectedIndex == -1) {
+                  await selectClip(firstNewIndex);
+                } else {
+                  showMessage('${newItems.length} media file(s) added to timeline.');
+                }
+              } catch (e) {
+                showMessage('Unable to add media: $e');
+              }
+            }
+
+            Future<void> selectClip(int index) async {
+              if (index < 0 || index >= clips.length) return;
+              final token = ++loadToken;
+              final old = controller;
+              controller = null;
+
+              setState(() {
+                selectedIndex = index;
+                loading = true;
+              });
+
+              if (old != null) await old.dispose();
+
+              final item = clips[index];
+              if (!item.isVideo) {
+                setState(() => loading = false);
+                return;
+              }
+
+              try {
+                final next = VideoPlayerController.file(File(item.path));
+                await next.initialize();
+                if (!mounted || token != loadToken) {
+                  await next.dispose();
+                  return;
+                }
+                item.duration = next.value.duration.inMilliseconds / 1000;
+                if (item.trimEnd <= 0 || item.trimEnd > item.duration) {
+                  item.trimEnd = item.duration;
+                }
+                controller = next;
+                await next.setLooping(true);
+                if (item.trimStart > 0) {
+                  await next.seekTo(Duration(
+                    milliseconds: (item.trimStart * 1000).round(),
+                  ));
+                }
+                if (mounted && token == loadToken) {
+                  setState(() => loading = false);
+                }
+              } catch (e) {
+                if (mounted && token == loadToken) {
+                  setState(() => loading = false);
+                  showMessage('This video format cannot be previewed on this phone: $e');
+                }
+              }
+            }
+
+            Future<void> removeClip(int index) async {
+              if (index < 0 || index >= clips.length) return;
+              final wasSelected = index == selectedIndex;
+              final old = wasSelected ? controller : null;
+              if (wasSelected) {
+                controller = null;
+                ++loadToken;
+              }
+              if (old != null) await old.dispose();
+
+              int nextIndex = selectedIndex;
+              setState(() {
+                clips.removeAt(index);
+                if (clips.isEmpty) {
+                  selectedIndex = -1;
+                } else if (wasSelected) {
+                  selectedIndex = index >= clips.length ? clips.length - 1 : index;
+                } else if (index < selectedIndex) {
+                  selectedIndex--;
+                }
+                nextIndex = selectedIndex;
+              });
+
+              if (clips.isNotEmpty && (wasSelected || index < selectedIndex)) {
+                await selectClip(nextIndex);
+              }
+            }
+
+            Future<void> togglePlayback() async {
+              final c = controller;
+              final item = selectedClip;
+              if (c == null || item == null || !c.value.isInitialized) return;
+              if (c.value.isPlaying) {
+                await c.pause();
+              } else {
+                final pos = c.value.position.inMilliseconds / 1000;
+                if (pos < item.trimStart || pos >= item.trimEnd) {
+                  await c.seekTo(Duration(
+                    milliseconds: (item.trimStart * 1000).round(),
+                  ));
+                }
+                await c.play();
+              }
+              if (mounted) setState(() {});
+            }
+
+            void updateTrim(RangeValues values) {
+              final item = selectedClip;
+              if (item == null) return;
+              setState(() {
+                item.trimStart = values.start;
+                item.trimEnd = values.end;
+              });
+            }
+
+            void showMessage(String message) {
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(message)),
+              );
+            }
+
+            String formatTime(double seconds) {
+              final total = seconds.floor();
+              return '${(total ~/ 60).toString().padLeft(2, '0')}:'
+                  '${(total % 60).toString().padLeft(2, '0')}';
+            }
+
+            @override
+            void dispose() {
+              controller?.dispose();
+              super.dispose();
+            }
+
+            Widget buildPreview(MediaClip? item) {
+              if (loading) return const CircularProgressIndicator();
+              if (item == null) {
+                return const Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.perm_media_outlined, size: 55, color: Colors.white38),
+                    SizedBox(height: 10),
+                    Text('Select photos or videos to start'),
+                  ],
+                );
+              }
+              if (!item.isVideo) {
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.file(
+                    File(item.path),
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const Text(
+                      'This image format cannot be previewed on this device.',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                );
+              }
+              if (controller == null || !controller!.value.isInitialized) {
+                return const Text('Video preview unavailable');
+              }
+              return ClipRect(
+                child: AspectRatio(
+                  aspectRatio: cropAspectRatio,
+                  child: FittedBox(
+                    fit: BoxFit.cover,
+                    child: SizedBox(
+                      width: controller!.value.size.width,
+                      height: controller!.value.size.height,
+                      child: VideoPlayer(controller!),
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              final item = selectedClip;
+              return Scaffold(
+                appBar: AppBar(
+                  title: const Text(
+                    'VKOP EDITOR',
+                    style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 2),
+                  ),
+                  actions: [
+                    IconButton(
+                      onPressed: pickMedia,
+                      icon: const Icon(Icons.add_circle_outline),
+                      tooltip: 'Add photos and videos',
+                    ),
+                  ],
+                ),
+                body: SafeArea(
+                  child: Column(
+                    children: [
+                      Expanded(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.all(14),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('PREVIEW', style: TextStyle(
+                                fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+                              const SizedBox(height: 12),
+                              Container(
+                                width: double.infinity,
+                                height: 300,
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.black,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(color: Colors.white12),
+                                ),
+                                child: Center(child: buildPreview(item)),
+                              ),
+                              const SizedBox(height: 10),
+                              Center(
+                                child: IconButton.filled(
+                                  onPressed: item?.isVideo == true && controller != null
+                                      ? togglePlayback : null,
+                                  iconSize: 32,
+                                  icon: Icon(controller?.value.isPlaying == true
+                                      ? Icons.pause : Icons.play_arrow),
+                                ),
+                              ),
+                              const SizedBox(height: 18),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text('TIMELINE', style: TextStyle(
+                                    fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+                                  Text('${clips.length} items',
+                                    style: const TextStyle(color: Colors.white54)),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              if (clips.isEmpty)
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(25),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF1C1C24),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Text(
+                                    'Tap + to add multiple photos and videos',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(color: Colors.white54),
+                                  ),
+                                )
+                              else
+                                SizedBox(
+                                  height: 112,
+                                  child: ListView.builder(
+                                    scrollDirection: Axis.horizontal,
+                                    itemCount: clips.length,
+                                    itemBuilder: (context, index) {
+                                      final media = clips[index];
+                                      final active = index == selectedIndex;
+                                      return GestureDetector(
+                                        onTap: () => selectClip(index),
+                                        child: Container(
+                                          width: 155,
+                                          margin: const EdgeInsets.only(right: 10),
+                                          padding: const EdgeInsets.all(9),
+                                          decoration: BoxDecoration(
+                                            color: active
+                                                ? Colors.deepPurple.withOpacity(0.35)
+                                                : const Color(0xFF24242D),
+                                            borderRadius: BorderRadius.circular(12),
+                                            border: Border.all(
+                                              color: active
+                                                  ? Colors.deepPurpleAccent
+                                                  : Colors.white12,
+                                              width: active ? 2 : 1,
+                                            ),
+                                          ),
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Row(children: [
+                                                Icon(media.isVideo
+                                                    ? Icons.video_file : Icons.image,
+                                                    size: 18),
+                                                const Spacer(),
+                                                GestureDetector(
+                                                  onTap: () => removeClip(index),
+                                                  child: const Icon(Icons.close,
+                                                    color: Colors.redAccent, size: 20),
+                                                ),
+                                              ]),
+                                              const Spacer(),
+                                              Text(media.name, maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(fontSize: 12)),
                                               const SizedBox(height: 3),
                                               Text(media.isVideo
                                                   ? (media.duration > 0
