@@ -1,3 +1,547 @@
+name: Build VKOP Android APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create Flutter project
+        run: flutter create --org com.vkop --project-name ai --platforms android app
+
+      - name: Set Android app name
+        run: |
+          sed -i 's/android:label="ai"/android:label="VKOP"/' app/android/app/src/main/AndroidManifest.xml
+
+      - name: Install Flutter packages
+        working-directory: app
+        run: |
+          flutter pub add file_picker
+          flutter pub add video_player
+          flutter pub add path_provider
+
+      - name: Add FFmpeg Android dependency
+        working-directory: app
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          gradle = Path("android/app/build.gradle.kts")
+          if not gradle.exists():
+              raise SystemExit("Expected app/build.gradle.kts was not found.")
+          content = gradle.read_text()
+          dependency = 'implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.9")'
+          if dependency not in content:
+              content += "\n\ndependencies {\n    " + dependency + "\n}\n"
+          gradle.write_text(content)
+          print("FFmpeg dependency added.")
+          PY
+
+      - name: Create FFmpeg Kotlin bridge
+        working-directory: app
+        run: |
+          mkdir -p android/app/src/main/kotlin/com/vkop/ai
+          cat > android/app/src/main/kotlin/com/vkop/ai/MainActivity.kt <<'EOF'
+          package com.vkop.ai
+
+          import io.flutter.embedding.android.FlutterActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodChannel
+          import com.arthenica.ffmpegkit.FFmpegKit
+          import com.arthenica.ffmpegkit.ReturnCode
+          import android.content.ContentValues
+          import android.os.Build
+          import android.os.Environment
+          import android.provider.MediaStore
+          import java.io.File
+
+          class MainActivity : FlutterActivity() {
+              private val channelName = "com.vkop.ai/ffmpeg"
+
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
+                      .setMethodCallHandler { call, result ->
+                          when (call.method) {
+                              "execute" -> {
+                                  val arguments = call.argument<List<String>>("arguments")
+                                  if (arguments.isNullOrEmpty()) {
+                                      result.error("INVALID_ARGUMENTS", "FFmpeg arguments are missing.", null)
+                                      return@setMethodCallHandler
+                                  }
+                                  FFmpegKit.executeWithArgumentsAsync(arguments.toTypedArray()) { session ->
+                                      val output = session.output ?: ""
+                                      val success = ReturnCode.isSuccess(session.returnCode)
+                                      runOnUiThread {
+                                          if (success) result.success(output)
+                                          else result.error(
+                                              "FFMPEG_FAILED",
+                                              output.ifBlank { "FFmpeg execution failed." },
+                                              session.returnCode?.toString()
+                                          )
+                                      }
+                                  }
+                              }
+                              "saveToDownloads" -> {
+                                  val sourcePath = call.argument<String>("sourcePath")
+                                  val fileName = call.argument<String>("fileName")
+                                  if (sourcePath.isNullOrBlank() || fileName.isNullOrBlank()) {
+                                      result.error("INVALID_ARGUMENTS", "Source path or file name is missing.", null)
+                                      return@setMethodCallHandler
+                                  }
+                                  if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                                      result.error("UNSUPPORTED_ANDROID", "Saving to Movies/VKOP requires Android 10 or newer.", null)
+                                      return@setMethodCallHandler
+                                  }
+                                  try {
+                                      val values = ContentValues().apply {
+                                          put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                                          put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+                                          put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/VKOP")
+                                          put(MediaStore.MediaColumns.IS_PENDING, 1)
+                                      }
+                                      val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                                          ?: throw IllegalStateException("Could not create video in Movies/VKOP.")
+                                      contentResolver.openOutputStream(uri)?.use { output ->
+                                          File(sourcePath).inputStream().use { input -> input.copyTo(output) }
+                                      } ?: throw IllegalStateException("Could not open output video stream.")
+                                      values.clear()
+                                      values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                                      contentResolver.update(uri, values, null, null)
+                                      result.success(uri.toString())
+                                  } catch (e: Exception) {
+                                      result.error("SAVE_FAILED", e.message ?: "Could not save exported video.", null)
+                                  }
+                              }
+                              else -> result.notImplemented()
+                          }
+                      }
+              }
+          }
+          EOF
+
+      - name: Create VKOP Editor
+        working-directory: app
+        run: |
+          cat > lib/main.dart <<'EOF'
+          import 'dart:async';
+          import 'dart:io';
+          import 'package:flutter/material.dart';
+          import 'package:flutter/services.dart';
+          import 'package:file_picker/file_picker.dart';
+          import 'package:video_player/video_player.dart';
+          import 'package:path_provider/path_provider.dart';
+
+          void main() => runApp(const VKOPApp());
+
+          const ffmpegChannel = MethodChannel('com.vkop.ai/ffmpeg');
+          const purple = Color(0xFF7653D6);
+          const panel = Color(0xFFF4F4F7);
+
+          class MediaClip {
+            final String path;
+            final String name;
+            final bool isVideo;
+            final Object id = Object();
+            double duration;
+            double trimStart = 0;
+            double trimEnd = 0;
+
+            MediaClip({required this.path, required this.name, required this.isVideo, this.duration = 3});
+          }
+
+          class OverlayClip {
+            final String path;
+            final String name;
+            final bool isVideo;
+            final Object id = Object();
+            double start = 0;
+            double duration = 3;
+            double centerX = .5;
+            double centerY = .5;
+            double widthFactor = .34;
+            double rotation = 0;
+
+            OverlayClip({required this.path, required this.name, required this.isVideo});
+          }
+
+          class VKOPApp extends StatelessWidget {
+            const VKOPApp({super.key});
+            @override
+            Widget build(BuildContext context) => MaterialApp(
+              title: 'VKOP',
+              debugShowCheckedModeBanner: false,
+              theme: ThemeData(
+                brightness: Brightness.light,
+                useMaterial3: true,
+                scaffoldBackgroundColor: Colors.white,
+                colorScheme: ColorScheme.fromSeed(seedColor: purple, brightness: Brightness.light),
+                appBarTheme: const AppBarTheme(backgroundColor: Colors.white, foregroundColor: Color(0xFF202027), elevation: 0),
+              ),
+              home: const VKOPHome(),
+            );
+          }
+
+          class VKOPHome extends StatefulWidget {
+            const VKOPHome({super.key});
+            @override
+            State<VKOPHome> createState() => _VKOPHomeState();
+          }
+
+          class _VKOPHomeState extends State<VKOPHome> {
+            final List<MediaClip> selected = [];
+            static const videoExt = {'mp4','m4v','mov','3gp','3gpp','mkv','webm','avi','ts','mts','m2ts','mpg','mpeg','wmv','flv','ogv'};
+            static const imageExt = {'jpg','jpeg','png','webp','gif','bmp','wbmp','heic','heif','avif','tif','tiff'};
+
+            Future<void> chooseMedia() async {
+              try {
+                final result = await FilePicker.platform.pickFiles(type: FileType.media, allowMultiple: true);
+                if (result == null) return;
+                final additions = <MediaClip>[];
+                for (final file in result.files) {
+                  if (file.path == null) continue;
+                  final ext = (file.extension ?? '').toLowerCase();
+                  final isVideo = videoExt.contains(ext);
+                  if (!isVideo && !imageExt.contains(ext)) continue;
+                  if (selected.any((e) => e.path == file.path) || additions.any((e) => e.path == file.path)) continue;
+                  additions.add(MediaClip(path: file.path!, name: file.name, isVideo: isVideo));
+                }
+                if (!mounted) return;
+                setState(() => selected.addAll(additions));
+                if (additions.isEmpty) message('No new supported media selected.');
+              } catch (e) { message('Could not select media: $e'); }
+            }
+
+            void message(String value) {
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(value)));
+            }
+
+            void openEditor() {
+              if (selected.isEmpty) { message('Please select photos, videos or GIFs first.'); return; }
+              Navigator.push(context, MaterialPageRoute(builder: (_) => VKOPEditor(initialClips: List.of(selected))));
+            }
+
+            @override
+            Widget build(BuildContext context) => Scaffold(
+              appBar: AppBar(title: const Text('VKOP', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 2)), centerTitle: true),
+              body: SafeArea(child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const SizedBox(height: 12),
+                  const Text('Create a new project', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  const Text('Select photos, videos and GIFs to start editing.', style: TextStyle(color: Colors.black54)),
+                  const SizedBox(height: 22),
+                  InkWell(onTap: chooseMedia, borderRadius: BorderRadius.circular(18), child: Container(
+                    width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 30),
+                    decoration: BoxDecoration(color: const Color(0xFFF6F2FF), borderRadius: BorderRadius.circular(18), border: Border.all(color: purple.withOpacity(.45))),
+                    child: const Column(children: [Icon(Icons.add_photo_alternate_outlined, size: 48, color: purple), SizedBox(height: 10), Text('Select media', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)), SizedBox(height: 4), Text('Choose multiple photos, videos or GIFs', style: TextStyle(color: Colors.black54, fontSize: 12))]),
+                  )),
+                  const SizedBox(height: 20),
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('SELECTED MEDIA', style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.2)), Text('${selected.length} items', style: const TextStyle(color: Colors.black54))]),
+                  const SizedBox(height: 10),
+                  Expanded(child: selected.isEmpty ? const Center(child: Text('Your selected media will appear here.', style: TextStyle(color: Colors.black38))) : GridView.builder(
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, crossAxisSpacing: 9, mainAxisSpacing: 9, childAspectRatio: .82),
+                    itemCount: selected.length,
+                    itemBuilder: (context, index) {
+                      final item = selected[index];
+                      return Container(decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.black12)), child: Stack(children: [
+                        Positioned.fill(child: ClipRRect(borderRadius: BorderRadius.circular(12), child: item.isVideo ? const Center(child: Icon(Icons.video_file, size: 38, color: Colors.black45)) : Image.file(File(item.path), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.image, size: 36))))),
+                        Positioned(left: 5, right: 5, bottom: 5, child: Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: Colors.black.withOpacity(.65), borderRadius: BorderRadius.circular(6)), child: Text(item.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, color: Colors.white)))),
+                        Positioned(right: 4, top: 4, child: InkWell(onTap: () => setState(() => selected.removeAt(index)), child: const CircleAvatar(radius: 12, backgroundColor: Colors.black87, child: Icon(Icons.close, size: 15, color: Colors.white)))),
+                      ]));
+                    },
+                  )),
+                  Row(children: [Expanded(child: OutlinedButton.icon(onPressed: chooseMedia, icon: const Icon(Icons.add), label: const Text('Add more'))), const SizedBox(width: 10), Expanded(child: FilledButton.icon(onPressed: selected.isEmpty ? null : openEditor, icon: const Icon(Icons.movie_creation_outlined), label: const Text('Import to editor')))]),
+                ]),
+              )),
+            );
+          }
+
+          class VKOPEditor extends StatefulWidget {
+            final List<MediaClip> initialClips;
+            const VKOPEditor({super.key, required this.initialClips});
+            @override
+            State<VKOPEditor> createState() => _VKOPEditorState();
+          }
+
+          class _VKOPEditorState extends State<VKOPEditor> {
+            late List<MediaClip> clips;
+            final List<OverlayClip> overlays = [];
+            final Map<String, VideoPlayerController> overlayPlayers = {};
+            VideoPlayerController? player;
+            int selectedIndex = 0;
+            int selectedOverlay = -1;
+            int loadToken = 0;
+            int sequenceToken = 0;
+            bool loading = false;
+            bool playingSequence = false;
+            bool testingFFmpeg = false;
+            bool exporting = false;
+            Timer? sequenceTimer;
+            String activeTool = 'Edit';
+            String cropRatio = 'Original';
+            String filter = 'None';
+            String audioName = '';
+            String exportResolution = '1080p';
+            int exportFps = 60;
+            double speed = 1;
+            double playhead = 0;
+            double _gestureScale = 1;
+            double _gestureX = .5;
+            double _gestureY = .5;
+            double _gestureRotation = 0;
+            final TextEditingController textController = TextEditingController();
+            String overlayText = '';
+
+            MediaClip? get current => clips.isEmpty || selectedIndex < 0 || selectedIndex >= clips.length ? null : clips[selectedIndex];
+            double get projectTime => clips.take(selectedIndex < 0 ? 0 : selectedIndex).fold<double>(0, (sum, c) => sum + (c.isVideo ? (c.trimEnd > c.trimStart ? c.trimEnd - c.trimStart : c.duration) : c.duration)) + playhead;
+            OverlayClip? get currentOverlay => selectedOverlay < 0 || selectedOverlay >= overlays.length ? null : overlays[selectedOverlay];
+
+            @override
+            void initState() {
+              super.initState();
+              clips = List.of(widget.initialClips);
+              WidgetsBinding.instance.addPostFrameCallback((_) { if (clips.isNotEmpty) selectClip(0); });
+            }
+
+            void toast(String value) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(value))); }
+            String time(double s) { final n = s.floor(); return '${(n ~/ 60).toString().padLeft(2,'0')}:${(n % 60).toString().padLeft(2,'0')}'; }
+            double get aspect => cropRatio == '9:16' ? 9/16 : cropRatio == '16:9' ? 16/9 : cropRatio == '1:1' ? 1 : (player?.value.isInitialized == true ? player!.value.aspectRatio : 16/9);
+
+            void stopSequence({bool refresh = true}) {
+              playingSequence = false; sequenceToken++; sequenceTimer?.cancel(); sequenceTimer = null; player?.pause();
+              if (refresh && mounted) setState(() {});
+            }
+
+            Future<void> selectClip(int index) async {
+              if (index < 0 || index >= clips.length) return;
+              stopSequence(refresh: false);
+              final token = ++loadToken; final old = player; player = null;
+              setState(() { selectedIndex = index; loading = true; selectedOverlay = -1; playhead = 0; });
+              if (old != null) await old.dispose();
+              if (!mounted || token != loadToken) return;
+              final item = clips[index];
+              if (!item.isVideo) { item.duration = item.duration <= 0 ? 3 : item.duration; setState(() => loading = false); return; }
+              try {
+                final next = VideoPlayerController.file(File(item.path));
+                await next.initialize();
+                if (!mounted || token != loadToken) { await next.dispose(); return; }
+                item.duration = next.value.duration.inMilliseconds / 1000;
+                if (item.trimEnd <= 0 || item.trimEnd > item.duration) item.trimEnd = item.duration;
+                player = next;
+                await next.setLooping(false);
+                next.addListener(() { if (!mounted || !next.value.isInitialized) return; final pos = next.value.position.inMilliseconds / 1000; final relative = (pos - item.trimStart).clamp(0, item.duration).toDouble(); if ((relative - playhead).abs() > .12) setState(() => playhead = relative); });
+                if (item.trimStart > 0) await next.seekTo(Duration(milliseconds: (item.trimStart * 1000).round()));
+                setState(() => loading = false);
+              } catch (e) { if (mounted && token == loadToken) { setState(() => loading = false); toast('Video preview not supported: $e'); } }
+            }
+
+            Future<void> playAll() async { if (clips.isEmpty) return; playingSequence = true; await playAt(selectedIndex.clamp(0, clips.length - 1).toInt()); }
+            Future<void> playAt(int index) async {
+              if (!playingSequence || !mounted) return;
+              sequenceTimer?.cancel(); final token = ++sequenceToken;
+              if (index >= clips.length) { playingSequence = false; if (mounted) setState(() {}); return; }
+              final old = player; player = null; if (old != null) await old.dispose();
+              if (!mounted || token != sequenceToken || !playingSequence) return;
+              final item = clips[index]; setState(() { selectedIndex = index; loading = item.isVideo; playhead = 0; });
+              if (!item.isVideo) {
+                setState(() => loading = false);
+                sequenceTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+                  if (!mounted || token != sequenceToken || !playingSequence) { timer.cancel(); return; }
+                  setState(() => playhead = (playhead + .1).clamp(0, item.duration).toDouble());
+                  if (playhead >= item.duration) { timer.cancel(); playAt(index + 1); }
+                });
+                return;
+              }
+              try {
+                final next = VideoPlayerController.file(File(item.path)); await next.initialize();
+                if (!mounted || token != sequenceToken || !playingSequence) { await next.dispose(); return; }
+                item.duration = next.value.duration.inMilliseconds / 1000; if (item.trimEnd <= 0 || item.trimEnd > item.duration) item.trimEnd = item.duration;
+                player = next; await next.seekTo(Duration(milliseconds: (item.trimStart * 1000).round())); await next.setPlaybackSpeed(speed); await next.play(); setState(() => loading = false);
+                sequenceTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+                  if (!mounted || token != sequenceToken || !playingSequence) { timer.cancel(); return; }
+                  final p = player; if (p == null || !p.value.isInitialized) return;
+                  final pos = p.value.position.inMilliseconds / 1000; final relative = (pos - item.trimStart).clamp(0, item.duration).toDouble(); if (mounted) setState(() => playhead = relative);
+                  if (pos >= item.trimEnd) { timer.cancel(); playAt(index + 1); }
+                });
+              } catch (e) { toast('Could not play ${item.name}'); playAt(index + 1); }
+            }
+
+            void reorder(int oldIndex, int newIndex) {
+              if (newIndex > oldIndex) newIndex--; if (newIndex < 0 || newIndex >= clips.length) return;
+              stopSequence(refresh: false); final selectedItem = current;
+              setState(() { final moved = clips.removeAt(oldIndex); clips.insert(newIndex, moved); selectedIndex = selectedItem == null ? 0 : clips.indexOf(selectedItem); });
+            }
+
+            Future<void> removeSelected() async {
+              if (current == null) return; final old = player; player = null; ++loadToken; stopSequence(refresh: false);
+              setState(() { clips.removeAt(selectedIndex); selectedIndex = clips.isEmpty ? -1 : (selectedIndex >= clips.length ? clips.length - 1 : selectedIndex); });
+              if (old != null) await old.dispose(); if (clips.isNotEmpty) await selectClip(selectedIndex);
+            }
+
+            Future<void> splitSelected() async {
+              final item = current; final p = player;
+              if (item == null || !item.isVideo || p == null || !p.value.isInitialized) { toast('Select a video and play it to the split point first.'); return; }
+              final cut = p.value.position.inMilliseconds / 1000;
+              if (cut <= item.trimStart + .1 || cut >= item.trimEnd - .1) { toast('Move the playhead inside the selected video range first.'); return; }
+              final second = MediaClip(path: item.path, name: '${item.name} (split)', isVideo: true, duration: item.duration)..trimStart = cut..trimEnd = item.trimEnd;
+              setState(() { item.trimEnd = cut; clips.insert(selectedIndex + 1, second); }); toast('Clip split into two timeline segments.');
+            }
+
+            Future<void> chooseAudio() async {
+              try { final files = await FilePicker.platform.pickFiles(type: FileType.audio); if (files == null || files.files.isEmpty) return; setState(() => audioName = files.files.first.name); toast('Audio selected. Audio mixing will be added in a later milestone.'); }
+              catch (e) { toast('Could not select audio: $e'); }
+            }
+
+            Future<void> addOverlay() async {
+              try {
+                final r = await FilePicker.platform.pickFiles(type: FileType.media, allowMultiple: true);
+                if (r == null) return;
+                const vids = {'mp4','m4v','mov','3gp','3gpp','mkv','webm','avi','ts','mts','m2ts','mpg','mpeg','wmv','flv','ogv'};
+                const imgs = {'jpg','jpeg','png','webp','gif','bmp','heic','heif','avif','tif','tiff'};
+                final added = <OverlayClip>[];
+                for (final f in r.files) {
+                  if (f.path == null) continue;
+                  final ext = (f.extension ?? '').toLowerCase(); final isVideo = vids.contains(ext);
+                  if (!isVideo && !imgs.contains(ext)) continue;
+                  final layer = OverlayClip(path: f.path!, name: f.name, isVideo: isVideo);
+                  if (isVideo) {
+                    try {
+                      final c = VideoPlayerController.file(File(layer.path)); await c.initialize();
+                      layer.duration = c.value.duration.inMilliseconds / 1000;
+                      await c.setLooping(true); await c.setVolume(0); await c.play(); overlayPlayers[layer.path] = c;
+                    } catch (_) { layer.duration = 3; }
+                  }
+                  added.add(layer);
+                }
+                if (!mounted || added.isEmpty) return;
+                setState(() { overlays.addAll(added); selectedOverlay = overlays.length - 1; activeTool = 'Overlay'; });
+                toast('${added.length} overlay layer(s) added. Drag or pinch them on the preview.');
+              } catch (e) { toast('Could not add overlay: $e'); }
+            }
+
+            void deleteOverlay() {
+              final o = currentOverlay; if (o == null) return;
+              final c = overlayPlayers.remove(o.path); c?.dispose();
+              setState(() { overlays.removeAt(selectedOverlay); selectedOverlay = overlays.isEmpty ? -1 : (selectedOverlay >= overlays.length ? overlays.length - 1 : selectedOverlay); });
+            }
+
+            void beginOverlayGesture(ScaleStartDetails d) {
+              final o = currentOverlay; if (o == null) return;
+              _gestureScale = o.widthFactor; _gestureX = o.centerX; _gestureY = o.centerY; _gestureRotation = o.rotation;
+            }
+            void updateOverlayGesture(ScaleUpdateDetails d, Size size) {
+              final o = currentOverlay; if (o == null) return;
+              setState(() {
+                o.widthFactor = (_gestureScale * d.scale).clamp(.12, .9);
+                o.centerX = (_gestureX + d.focalPointDelta.dx / size.width).clamp(0.05, .95);
+                o.centerY = (_gestureY + d.focalPointDelta.dy / size.height).clamp(0.05, .95);
+                o.rotation = _gestureRotation + d.rotation;
+              });
+            }
+
+            Future<void> testFFmpeg() async {
+              if (testingFFmpeg) return; setState(() => testingFFmpeg = true);
+              try {
+                final output = await ffmpegChannel.invokeMethod<String>('execute', {'arguments': ['-version']});
+                if (!mounted) return; setState(() => testingFFmpeg = false);
+                final version = output?.split('\n').firstWhere((line) => line.startsWith('ffmpeg version'), orElse: () => 'FFmpeg is running.') ?? 'FFmpeg is running.';
+                toast(version);
+              } on PlatformException catch (e) { if (!mounted) return; setState(() => testingFFmpeg = false); toast('FFmpeg test failed: ${e.message}'); }
+              catch (e) { if (!mounted) return; setState(() => testingFFmpeg = false); toast('FFmpeg error: $e'); }
+            }
+
+            Future<void> ensureClipDurations() async {
+              for (final c in clips) {
+                if (!c.isVideo || c.duration > 0 && c.trimEnd > 0) continue;
+                final controller = VideoPlayerController.file(File(c.path));
+                try { await controller.initialize(); c.duration = controller.value.duration.inMilliseconds / 1000; c.trimEnd = c.duration; }
+                finally { await controller.dispose(); }
+              }
+            }
+
+            Future<void> exportProject() async {
+              if (exporting) return;
+              if (clips.isEmpty) { toast('Add a main video or photo first.'); return; }
+              setState(() => exporting = true);
+              try {
+                await ensureClipDurations();
+                final size = exportResolution == '720p' ? 720 : exportResolution == '1080p' ? 1080 : exportResolution == '2K' ? 1440 : 2160;
+                final width = cropRatio == '9:16' || cropRatio == '1:1' ? size : size * 16 ~/ 9;
+                final height = cropRatio == '9:16' ? size * 16 ~/ 9 : cropRatio == '1:1' ? size : size;
+                final args = <String>['-y'];
+                final durations = <double>[];
+                for (final c in clips) {
+                  final d = c.isVideo ? (c.trimEnd - c.trimStart).clamp(.1, 86400).toDouble() : c.duration.clamp(.1, 86400).toDouble();
+                  durations.add(d);
+                  if (c.isVideo) { args.addAll(['-ss', c.trimStart.toStringAsFixed(3), '-i', c.path]); }
+                  else { args.addAll(['-loop', '1', '-t', d.toStringAsFixed(3), '-i', c.path]); }
+                }
+                for (final o in overlays) {
+                  if (o.isVideo) { args.addAll(['-stream_loop', '-1', '-i', o.path]); }
+                  else if ((o.path.toLowerCase().endsWith('.gif'))) { args.addAll(['-stream_loop', '-1', '-i', o.path]); }
+                  else { args.addAll(['-loop', '1', '-i', o.path]); }
+                }
+                final filters = <String>[];
+                for (var i = 0; i < clips.length; i++) {
+                  final d = durations[i];
+                  filters.add('[$i:v]trim=duration=${d.toStringAsFixed(3)},setpts=PTS-STARTPTS,scale=$width:$height:force_original_aspect_ratio=decrease,pad=$width:$height:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=$exportFps,format=yuv420p[v$i]');
+                }
+                final baseInputs = List.generate(clips.length, (i) => '[v$i]').join();
+                filters.add('${baseInputs}concat=n=${clips.length}:v=1:a=0[base0]');
+                var previous = 'base0';
+                for (var j = 0; j < overlays.length; j++) {
+                  final o = overlays[j]; final inputIndex = clips.length + j;
+                  final start = o.start.clamp(0, 86400).toDouble();
+                  final end = (start + o.duration).clamp(start + .05, 86400).toDouble();
+                  final overlayWidth = (width * o.widthFactor).round().clamp(80, width).toInt();
+                  final next = 'base${j + 1}';
+                  filters.add('[$inputIndex:v]setpts=PTS-STARTPTS,scale=$overlayWidth:-1,rotate=${o.rotation.toStringAsFixed(4)}:c=none:ow=rotw(iw):oh=roth(ih),format=rgba[ov$j]');
+                  final x = '${width}*${o.centerX.toStringAsFixed(4)}-overlay_w/2';
+                  final y = '${height}*${o.centerY.toStringAsFixed(4)}-overlay_h/2';
+                  filters.add('[$previous][ov$j]overlay=x=$x:y=$y:enable=\'between(t,$start,$end)\':eof_action=pass[$next]');
+                  previous = next;
+                }
+                final bitrate = size >= 2160 ? '35000000' : size >= 1440 ? '20000000' : size >= 1080 ? '10000000' : '5000000';
+                args.addAll(['-filter_complex', filters.join(';'), '-map', '[$previous]', '-an', '-c:v', 'h264_mediacodec', '-b:v', bitrate, '-r', '$exportFps', '-pix_fmt', 'yuv420p', '-movflags', '+faststart']);
+                final dir = await getApplicationDocumentsDirectory();
+                final outputPath = '${dir.path}/VKOP_${DateTime.now().millisecondsSinceEpoch}.mp4';
+                args.addAll(['-t', durations.fold<double>(0, (a, b) => a + b).toStringAsFixed(3), outputPath]);
+                try {
+                  await ffmpegChannel.invokeMethod<String>('execute', {'arguments': args});
+                } on PlatformException {
+                  final fallbackArgs = List<String>.from(args);
+                  final codecIndex = fallbackArgs.indexOf('h264_mediacodec');
+                  if (codecIndex >= 0) fallbackArgs[codecIndex] = 'mpeg4';
+                  await ffmpegChannel.invokeMethod<String>('execute', {'arguments': fallbackArgs});
+                }
+                final fileName = outputPath.split('/').last;
+                await ffmpegChannel.invokeMethod<String>('saveToDownloads', {'sourcePath': outputPath, 'fileName': fileName});
+                if (!mounted) return;
+                setState(() => exporting = false);
+                toast('Export saved to Movies/VKOP/$fileName');
+              } on PlatformException catch (e) {
+                if (!mounted) return; setState(() => exporting = false); toast('Export failed: ${e.message ?? 'FFmpeg error'}');
+              } catch (e) {
+                if (!mounted) return; setState(() => exporting = false); toast('Export error: $e');
               }
             }
 
@@ -126,3 +670,4 @@
         with:
           name: VKOP-Android-APK
           path: app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
