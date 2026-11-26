@@ -211,10 +211,10 @@ jobs:
 
             Future<void> chooseMedia() async {
               try {
-                final result = await FilePicker.platform.pickFiles(type: FileType.media, allowMultiple: true);
-                if (result == null) return;
+                final result = await FilePicker.pickFiles(type: FileType.media);
+                if (result.isEmpty) return;
                 final additions = <MediaClip>[];
-                for (final file in result.files) {
+                for (final file in result) {
                   if (file.path == null) continue;
                   final ext = (file.extension ?? '').toLowerCase();
                   final isVideo = videoExt.contains(ext);
@@ -407,18 +407,18 @@ jobs:
             }
 
             Future<void> chooseAudio() async {
-              try { final files = await FilePicker.platform.pickFiles(type: FileType.audio); if (files == null || files.files.isEmpty) return; setState(() => audioName = files.files.first.name); toast('Audio selected. Audio mixing will be added in a later milestone.'); }
+              try { final files = await FilePicker.pickFiles(type: FileType.audio); if (files.isEmpty) return; setState(() => audioName = files.first.name); toast('Audio selected. Audio mixing will be added in a later milestone.'); }
               catch (e) { toast('Could not select audio: $e'); }
             }
 
             Future<void> addOverlay() async {
               try {
-                final r = await FilePicker.platform.pickFiles(type: FileType.media, allowMultiple: true);
-                if (r == null) return;
+                final r = await FilePicker.pickFiles(type: FileType.media);
+                if (r.isEmpty) return;
                 const vids = {'mp4','m4v','mov','3gp','3gpp','mkv','webm','avi','ts','mts','m2ts','mpg','mpeg','wmv','flv','ogv'};
                 const imgs = {'jpg','jpeg','png','webp','gif','bmp','heic','heif','avif','tif','tiff'};
                 final added = <OverlayClip>[];
-                for (final f in r.files) {
+                for (final f in r) {
                   if (f.path == null) continue;
                   final ext = (f.extension ?? '').toLowerCase(); final isVideo = vids.contains(ext);
                   if (!isVideo && !imgs.contains(ext)) continue;
