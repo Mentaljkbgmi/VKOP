@@ -1049,7 +1049,7 @@ jobs:
                     ',pad=w="max(iw,' + width.toString() + ')":h="max(ih,' + height.toString() + '):x="(ow-iw)*' + xExpr + '":y="(oh-ih)*' + yExpr + '":eval=frame' +
                     ',crop=' + width.toString() + ':' + height.toString() + ':x="(iw-ow)*' + xExpr + '":y="(ih-oh)*' + yExpr;
                   String videoTail = ',scale=' + width.toString() + ':' + height.toString() +
-                    ':force_original_aspect_ratio=decrease,pad=' + width.toString() + ':' + height.toString() +
+                    ':force_original_aspect_ratio=decrease,format=rgba,pad=' + width.toString() + ':' + height.toString() +
                     ':(ow-iw)/2:(oh-ih)/2:color=black@0,setsar=1,fps=' + exportFps.toString() + ',format=rgba';
                   if (segments.isNotEmpty) {
                     final labels = <String>[];
