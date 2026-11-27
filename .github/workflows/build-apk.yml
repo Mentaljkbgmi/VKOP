@@ -202,6 +202,8 @@ jobs:
             double positionX = .5;
             double positionY = .5;
             double opacity = 1;
+            double audioVolume = 1;
+            bool audioMuted = false;
             final List<KeyframePoint> keyframes = [];
 
             MediaClip({required this.path, required this.name, required this.isVideo, this.duration = 3});
@@ -474,6 +476,7 @@ jobs:
                 item.duration = next.value.duration.inMilliseconds / 1000;
                 if (item.trimEnd <= 0 || item.trimEnd > item.duration) item.trimEnd = item.duration;
                 player = next;
+                await next.setVolume(item.audioMuted ? 0 : item.audioVolume);
                 await next.setPlaybackSpeed(item.speed);
                 await next.setLooping(false);
                 next.addListener(() { if (!mounted || !next.value.isInitialized) return; final pos = next.value.position.inMilliseconds / 1000; final relative = (pos - item.trimStart).clamp(0, item.duration).toDouble(); if ((relative - playhead).abs() > .12) setState(() => playhead = relative); });
@@ -525,7 +528,8 @@ jobs:
               final item = current;
               if (item != null && item.keyframes.isNotEmpty) {
                 final k = keyframeValue(item.keyframes, at)!;
-                item.scale = k.scale.clamp(.1, 5).toDouble(); item.positionX = k.x.clamp(0, 1).toDouble(); item.positionY = k.y.clamp(0, 1).toDouble(); item.opacity = k.opacity.clamp(0, 1).toDouble();
+                item.scale = k.scale.clamp(.1, 5).toDouble(); item.positionX = k.x.clamp(0, 1).toDouble(); item.positionY = k.y.clamp(0, 1).toDouble(); item.opacity = k.opacity.clamp(0, 1).toDouble(); item.audioVolume = k.volume.clamp(0, 1).toDouble();
+                if (player?.value.isInitialized == true) player!.setVolume(item.audioMuted ? 0 : item.audioVolume);
               }
               for (final overlay in overlays) {
                 if (overlay.keyframes.isEmpty) continue;
@@ -553,7 +557,7 @@ jobs:
               }
               final item = current;
               if (item == null) { toast('Select a video, photo, overlay or audio clip first.'); return; }
-              item.keyframes.add(KeyframePoint(time: projectTime, scale: item.scale, x: item.positionX, y: item.positionY, opacity: item.opacity));
+              item.keyframes.add(KeyframePoint(time: projectTime, scale: item.scale, x: item.positionX, y: item.positionY, opacity: item.opacity, volume: item.audioVolume));
               setState(() {}); toast('Clip keyframe added at ${time(projectTime)}.');
             }
 
@@ -599,7 +603,7 @@ jobs:
                 final next = VideoPlayerController.file(File(item.path)); await next.initialize();
                 if (!mounted || token != sequenceToken || !playingSequence) { await next.dispose(); return; }
                 item.duration = next.value.duration.inMilliseconds / 1000; if (item.trimEnd <= 0 || item.trimEnd > item.duration) item.trimEnd = item.duration;
-                player = next; await next.seekTo(Duration(milliseconds: (item.trimStart * 1000).round())); await next.setPlaybackSpeed(item.speed); await next.play(); setState(() => loading = false);
+                player = next; await next.setVolume(item.audioMuted ? 0 : item.audioVolume); await next.seekTo(Duration(milliseconds: (item.trimStart * 1000).round())); await next.setPlaybackSpeed(item.speed); await next.play(); setState(() => loading = false);
                 var appliedSpeed = item.speed;
                 sequenceTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
                   if (!mounted || token != sequenceToken || !playingSequence) { timer.cancel(); return; }
@@ -958,6 +962,10 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                   final audio = currentAudio;
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Row(children: [const Expanded(child: Text('AUDIO MIXER', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))), OutlinedButton.icon(onPressed: chooseAudio, icon: const Icon(Icons.library_music, size: 16), label: const Text('Add music'))]),
+                    if (current != null && current!.isVideo) ...[
+                      Row(children: [const Text('Original video audio', style: TextStyle(fontSize: 10)), const Spacer(), Text('${(current!.audioVolume * 100).round()}%', style: const TextStyle(fontSize: 10))]),
+                      Row(children: [Expanded(child: Slider(min: 0, max: 1, divisions: 100, value: current!.audioVolume.clamp(0, 1).toDouble(), onChanged: (v) { setState(() => current!.audioVolume = v); player?.setVolume(current!.audioMuted ? 0 : v); })), IconButton(visualDensity: VisualDensity.compact, onPressed: () { setState(() => current!.audioMuted = !current!.audioMuted); player?.setVolume(current!.audioMuted ? 0 : current!.audioVolume); }, icon: Icon(current!.audioMuted ? Icons.volume_off : Icons.volume_up, size: 18))])
+                    ],
                     if (audioTracks.isEmpty) const Text('Add one or more music/audio files. Each track plays together with the video.', style: TextStyle(fontSize: 10, color: Colors.black54)),
                     if (audio != null) ...[
                       Text(audio.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
