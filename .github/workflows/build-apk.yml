@@ -907,11 +907,11 @@ jobs:
                 final first = value(a).toStringAsFixed(4);
                 final delta = (value(b) - value(a)).toStringAsFixed(4);
                 final span = (b.time - a.time).abs() < .0001 ? '0.0001' : (b.time - a.time).toStringAsFixed(4);
-                expression = 'if(lt(t\\,$end)\\,$first+($delta)*(t-$start)/$span\\,$expression)';
+                expression = 'if(lt(' + timeVariable + '\\,' + end + ')\\,' + first + '+(' + delta + ')*(' + timeVariable + '-' + start + ')/' + span + '\\,' + expression + ')';
               }
               final firstTime = (sorted.first.time - timelineOffset).toStringAsFixed(4);
               final firstValue = value(sorted.first).toStringAsFixed(4);
-              return 'if(lt(t\\,$firstTime)\\,$firstValue\\,$expression)';
+              return 'if(lt(' + timeVariable + '\\,' + firstTime + ')\\,' + firstValue + '\\,' + expression + ')';
             }
 
             String escapeFfmpegText(String value) {
