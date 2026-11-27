@@ -1042,20 +1042,22 @@ jobs:
                   final scaleExpr = keyframeExpression(clipKeys, 'scale', clipTimelineOffset, c.scale);
                   final xExpr = keyframeExpression(clipKeys, 'x', clipTimelineOffset, c.positionX);
                   final yExpr = keyframeExpression(clipKeys, 'y', clipTimelineOffset, c.positionY);
-                  final transform = clipKeys.isEmpty ? '' :
+                  final opacityExpr = keyframeExpression(clipKeys, 'opacity', clipTimelineOffset, c.opacity);
+                  final clipAlpha = ',colorchannelmixer=aa=\'' + opacityExpr + '\':eval=frame';
+                  final transform = clipKeys.isEmpty && (c.scale - 1).abs() < .001 && (c.positionX - .5).abs() < .001 && (c.positionY - .5).abs() < .001 ? '' :
                     ',scale=w="ceil(' + width.toString() + '*max(0.1,' + scaleExpr + ')/2)*2":h="ceil(' + height.toString() + '*max(0.1,' + scaleExpr + ')/2)*2":eval=frame' +
                     ',pad=w="max(iw,' + width.toString() + ')":h="max(ih,' + height.toString() + '):x="(ow-iw)*' + xExpr + '":y="(oh-ih)*' + yExpr + '":eval=frame' +
                     ',crop=' + width.toString() + ':' + height.toString() + ':x="(iw-ow)*' + xExpr + '":y="(ih-oh)*' + yExpr;
                   String videoTail = ',scale=' + width.toString() + ':' + height.toString() +
                     ':force_original_aspect_ratio=decrease,pad=' + width.toString() + ':' + height.toString() +
-                    ':(ow-iw)/2:(oh-ih)/2,setsar=1,fps=' + exportFps.toString() + ',format=yuv420p';
+                    ':(ow-iw)/2:(oh-ih)/2:color=black@0,setsar=1,fps=' + exportFps.toString() + ',format=rgba';
                   if (segments.isNotEmpty) {
                     final labels = <String>[];
                     var segmentTimelineOffset = clipTimelineOffset;
                     for (var k = 0; k < segments.length; k++) {
                       final segment = segments[k];
                       final label = 'curve_' + i.toString() + '_' + k.toString();
-                      final segmentTransform = clipKeys.isEmpty ? '' :
+                      final segmentTransform = clipKeys.isEmpty && (c.scale - 1).abs() < .001 && (c.positionX - .5).abs() < .001 && (c.positionY - .5).abs() < .001 ? '' :
                         ',scale=w="ceil(' + width.toString() + '*max(0.1,' +
                         keyframeExpression(clipKeys, 'scale', segmentTimelineOffset, c.scale) +
                         ')/2)*2":h="ceil(' + height.toString() + '*max(0.1,' +
@@ -1070,7 +1072,7 @@ jobs:
                       filters.add('[' + i.toString() + ':v]trim=start=' + segment['offset']!.toStringAsFixed(4) +
                         ':duration=' + segment['source']!.toStringAsFixed(4) +
                         ',setpts=(PTS-STARTPTS)/' + segment['speed']!.toStringAsFixed(4) +
-                        videoTail + segmentTransform + '[' + label + ']');
+                        videoTail + segmentTransform + clipAlpha + '[' + label + ']');
                       labels.add('[' + label + ']');
                       segmentTimelineOffset += segment['output']!;
                     }
@@ -1079,13 +1081,23 @@ jobs:
                     final sourceDuration = durations[i] * clipSpeeds[i];
                     filters.add('[' + i.toString() + ':v]trim=duration=' + sourceDuration.toStringAsFixed(3) +
                       ',setpts=(PTS-STARTPTS)/' + clipSpeeds[i].toStringAsFixed(4) +
-                      videoTail + transform + '[v' + i.toString() + ']');
+                      videoTail + transform + clipAlpha + '[v' + i.toString() + ']');
                   }
                   clipTimelineOffset += durations[i];
                 }
                 final baseInputs = List.generate(clips.length, (i) => '[v' + i.toString() + ']').join();
                 filters.add(baseInputs + 'concat=n=' + clips.length.toString() + ':v=1:a=0[base0]');
-                var previous = 'base0';
+                final canvasColor = switch (backgroundColorName) {
+                  'White' => 'white',
+                  'Grey' => '0x777777',
+                  'Purple' => '0x7653D6',
+                  'Green' => '0x16865B',
+                  _ => 'black',
+                };
+                filters.add('color=c=' + canvasColor + ':s=' + width.toString() + 'x' + height.toString() +
+                  ':r=' + exportFps.toString() + ':d=' + projectDuration.toStringAsFixed(3) + '[vkop_canvas]');
+                filters.add('[vkop_canvas][base0]overlay=shortest=1:format=auto[base_composited]');
+                var previous = 'base_composited';
 
                 // Apply the selected color filter and image adjustments to the complete main track.
                 final adjusted = 'adjusted_base';
