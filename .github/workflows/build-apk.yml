@@ -1005,7 +1005,7 @@ jobs:
                   filters.add('[' + previous + ']scale=' + (width * 1.34).round().toString() + ':' + (height * 1.34).round().toString() +
                     ',crop=w=' + "'" + width.toString() + '/(' + zoomExpression + ')'" +
                     ':h=' + "'" + height.toString() + '/(' + zoomExpression + ')'" +
-                    ':x=(iw-ow)/2:y=(ih-oh)/2,scale=' + width.toString() + ':' + height.toString() + '[' + zoomed + ']');
+                    ':eval=frame:x=(iw-ow)/2:y=(ih-oh)/2,scale=' + width.toString() + ':' + height.toString() + '[' + zoomed + ']');
                   previous = zoomed;
                 }
 
