@@ -889,6 +889,48 @@ jobs:
               return 'if(lt(t\\,$firstTime)\\,$firstValue\\,$expression)';
             }
 
+            double curveSpeedAt(MediaClip item, double sourcePosition) {
+              final length = (item.trimEnd - item.trimStart).clamp(.1, 999999).toDouble();
+              final t = ((sourcePosition - item.trimStart) / length).clamp(0.0, 1.0);
+              final points = switch (item.curvePreset) {
+                'Bullet' => [1.0, .25, .25, 1.0],
+                'Jump Cut' => [1.0, 4.0, 4.0, 1.0],
+                'Hero' => [1.0, .5, .5, 1.0],
+                'Smooth' => [1.0, 1.5, 1.5, 1.0],
+                'Flash In' => [.25, 1.0, 2.0, 4.0],
+                _ => [1.0, 3.0, .5, 1.0],
+              };
+              final scaled = t * (points.length - 1);
+              final index = scaled.floor().clamp(0, points.length - 2).toInt();
+              final fraction = scaled - index;
+              return (points[index] + (points[index + 1] - points[index]) * fraction).clamp(.1, 16).toDouble();
+            }
+
+            String keyframeExpression(List<KeyframePoint> points, String property, double timelineOffset, double fallback) {
+              if (points.isEmpty) return fallback.toStringAsFixed(4);
+              double value(KeyframePoint point) => switch (property) {
+                'scale' => point.scale,
+                'x' => point.x,
+                'y' => point.y,
+                'opacity' => point.opacity,
+                _ => point.volume,
+              };
+              final sorted = List<KeyframePoint>.of(points)..sort((a, b) => a.time.compareTo(b.time));
+              String expression = value(sorted.last).toStringAsFixed(4);
+              for (var i = sorted.length - 2; i >= 0; i--) {
+                final a = sorted[i], b = sorted[i + 1];
+                final start = (a.time - timelineOffset).toStringAsFixed(4);
+                final end = (b.time - timelineOffset).toStringAsFixed(4);
+                final first = value(a).toStringAsFixed(4);
+                final delta = (value(b) - value(a)).toStringAsFixed(4);
+                final span = (b.time - a.time).abs() < .0001 ? '0.0001' : (b.time - a.time).toStringAsFixed(4);
+                expression = 'if(lt(t\\,$end)\\,$first+($delta)*(t-$start)/$span\\,$expression)';
+              }
+              final firstTime = (sorted.first.time - timelineOffset).toStringAsFixed(4);
+              final firstValue = value(sorted.first).toStringAsFixed(4);
+              return 'if(lt(t\\,$firstTime)\\,$firstValue\\,$expression)';
+            }
+
             String escapeFfmpegText(String value) {
               return value
                   .replaceAll('\\', '\\\\')
@@ -913,13 +955,32 @@ jobs:
                 final args = <String>['-y'];
                 final durations = <double>[];
                 final clipSpeeds = <double>[];
+                final clipCurveSegments = <List<Map<String, double>>>[];
                 for (final c in clips) {
                   final sourceDuration = c.isVideo
                       ? (c.trimEnd - c.trimStart).clamp(.1, 86400).toDouble()
                       : c.duration.clamp(.1, 86400).toDouble();
                   final clipSpeed = c.speed.clamp(.1, 16).toDouble();
-                  clipSpeeds.add(clipSpeed);
-                  durations.add(sourceDuration / clipSpeed);
+                  final segments = <Map<String, double>>[];
+                  if (c.isVideo && c.speedMode == 'Curve') {
+                    const segmentCount = 24;
+                    final sourceStep = sourceDuration / segmentCount;
+                    var outputDuration = 0.0;
+                    for (var segment = 0; segment < segmentCount; segment++) {
+                      final sourceOffset = segment * sourceStep;
+                      final sourcePart = segment == segmentCount - 1 ? sourceDuration - sourceOffset : sourceStep;
+                      final segmentSpeed = curveSpeedAt(c, c.trimStart + sourceOffset + sourcePart / 2);
+                      final renderedPart = sourcePart / segmentSpeed;
+                      segments.add({'offset': sourceOffset, 'source': sourcePart, 'speed': segmentSpeed, 'output': renderedPart});
+                      outputDuration += renderedPart;
+                    }
+                    clipSpeeds.add(sourceDuration / outputDuration);
+                    durations.add(outputDuration);
+                  } else {
+                    clipSpeeds.add(clipSpeed);
+                    durations.add(sourceDuration / clipSpeed);
+                  }
+                  clipCurveSegments.add(segments);
                   if (c.isVideo) {
                     args.addAll(['-ss', c.trimStart.toStringAsFixed(3), '-i', c.path]);
                   } else {
@@ -955,7 +1016,7 @@ jobs:
                       if (await extracted.exists() && await extracted.length() > 1024) {
                         temporaryAudioFiles.add(extracted);
                         args.addAll(['-i', audioPath]);
-                        audioInputs.add({'path': audioPath, 'start': timelineStart, 'duration': durations[i], 'volume': c.audioVolume, 'speed': clipSpeeds[i], 'voice': true, 'keyframes': c.keyframes});
+                        audioInputs.add({'path': audioPath, 'start': timelineStart, 'duration': durations[i], 'volume': c.audioVolume, 'speed': clipSpeeds[i], 'voice': true, 'keyframes': c.keyframes, 'curveSegments': clipCurveSegments[i]});
                       }
                     } catch (_) {
                       // A video without an audio stream is valid; continue without its original sound.
@@ -973,13 +1034,40 @@ jobs:
                 }
 
                 final filters = <String>[];
+                var clipTimelineOffset = 0.0;
                 for (var i = 0; i < clips.length; i++) {
-                  final sourceDuration = durations[i] * clipSpeeds[i];
-                  filters.add('[' + i.toString() + ':v]trim=duration=' + sourceDuration.toStringAsFixed(3) +
-                    ',setpts=(PTS-STARTPTS)/' + clipSpeeds[i].toStringAsFixed(4) +
-                    ',scale=' + width.toString() + ':' + height.toString() +
+                  final c = clips[i];
+                  final segments = clipCurveSegments[i];
+                  final clipKeys = c.keyframes;
+                  final scaleExpr = keyframeExpression(clipKeys, 'scale', clipTimelineOffset, c.scale).replaceAll('t', '(t)');
+                  final xExpr = keyframeExpression(clipKeys, 'x', clipTimelineOffset, c.positionX);
+                  final yExpr = keyframeExpression(clipKeys, 'y', clipTimelineOffset, c.positionY);
+                  final transform = clipKeys.isEmpty ? '' :
+                    ',scale=w="ceil(' + width.toString() + '*max(0.1,' + scaleExpr + ')/2)*2":h="ceil(' + height.toString() + '*max(0.1,' + scaleExpr + ')/2)*2":eval=frame' +
+                    ',pad=w="max(iw,' + width.toString() + ')":h="max(ih,' + height.toString() + '):x="(ow-iw)*' + xExpr + '":y="(oh-ih)*' + yExpr + '":eval=frame' +
+                    ',crop=' + width.toString() + ':' + height.toString() + ':x="(iw-ow)*' + xExpr + '":y="(ih-oh)*' + yExpr;
+                  String videoTail = ',scale=' + width.toString() + ':' + height.toString() +
                     ':force_original_aspect_ratio=decrease,pad=' + width.toString() + ':' + height.toString() +
-                    ':(ow-iw)/2:(oh-ih)/2,setsar=1,fps=' + exportFps.toString() + ',format=yuv420p[v' + i.toString() + ']');
+                    ':(ow-iw)/2:(oh-ih)/2,setsar=1,fps=' + exportFps.toString() + ',format=yuv420p';
+                  if (segments.isNotEmpty) {
+                    final labels = <String>[];
+                    for (var k = 0; k < segments.length; k++) {
+                      final segment = segments[k];
+                      final label = 'curve_' + i.toString() + '_' + k.toString();
+                      filters.add('[' + i.toString() + ':v]trim=start=' + segment['offset']!.toStringAsFixed(4) +
+                        ':duration=' + segment['source']!.toStringAsFixed(4) +
+                        ',setpts=(PTS-STARTPTS)/' + segment['speed']!.toStringAsFixed(4) +
+                        videoTail + '[' + label + ']');
+                      labels.add('[' + label + ']');
+                    }
+                    filters.add(labels.join() + 'concat=n=' + segments.length.toString() + ':v=1:a=0[v' + i.toString() + ']');
+                  } else {
+                    final sourceDuration = durations[i] * clipSpeeds[i];
+                    filters.add('[' + i.toString() + ':v]trim=duration=' + sourceDuration.toStringAsFixed(3) +
+                      ',setpts=(PTS-STARTPTS)/' + clipSpeeds[i].toStringAsFixed(4) +
+                      videoTail + transform + '[v' + i.toString() + ']');
+                  }
+                  clipTimelineOffset += durations[i];
                 }
                 final baseInputs = List.generate(clips.length, (i) => '[v' + i.toString() + ']').join();
                 filters.add(baseInputs + 'concat=n=' + clips.length.toString() + ':v=1:a=0[base0]');
@@ -1020,16 +1108,23 @@ jobs:
                   final startTime = o.start.clamp(0, 86400).toDouble();
                   final safeStart = startTime.clamp(0, projectDuration > .05 ? projectDuration - .05 : 0).toDouble();
                   final endTime = (safeStart + o.duration).clamp(safeStart + .05, projectDuration > safeStart + .05 ? projectDuration : safeStart + .05).toDouble();
+                  final overlayKeys = o.keyframes;
+                  final scaleExpr = keyframeExpression(overlayKeys, 'scale', startTime, o.widthFactor);
+                  final opacityExpr = keyframeExpression(overlayKeys, 'opacity', startTime, o.opacity);
+                  final centerXExpr = keyframeExpression(overlayKeys, 'x', 0, o.centerX);
+                  final centerYExpr = keyframeExpression(overlayKeys, 'y', 0, o.centerY);
                   final overlayWidth = (width * o.widthFactor).round().clamp(80, width).toInt();
                   final next = 'base' + (j + 1).toString();
                   final keyFilter = chromaKeyEnabled
                     ? ',chromakey=0x00FF00:' + chromaSimilarity.clamp(0, 1).toStringAsFixed(3) + ':' + chromaBlend.clamp(0, .5).toStringAsFixed(3)
                     : '';
-                  filters.add('[' + inputIndex.toString() + ':v]setpts=PTS-STARTPTS,scale=' + overlayWidth.toString() +
-                    ':-1,rotate=' + o.rotation.toStringAsFixed(4) + ':c=none:ow=rotw(iw):oh=roth(ih)' +
-                    keyFilter + ',format=rgba,colorchannelmixer=aa=' + o.opacity.clamp(0, 1).toStringAsFixed(3) + '[ov' + j.toString() + ']');
-                  final x = width.toString() + '*' + o.centerX.toStringAsFixed(4) + '-overlay_w/2';
-                  final y = height.toString() + '*' + o.centerY.toStringAsFixed(4) + '-overlay_h/2';
+                  final dynamicScale = overlayKeys.isEmpty ? overlayWidth.toString() : '"max(80,' + width.toString() + '*' + scaleExpr + ')"';
+                  final dynamicOpacity = overlayKeys.isEmpty ? o.opacity.clamp(0, 1).toStringAsFixed(3) : "'" + opacityExpr + "'";
+                  filters.add('[' + inputIndex.toString() + ':v]setpts=PTS-STARTPTS,scale=w=' + dynamicScale +
+                    ':h=-1:eval=frame,rotate=' + o.rotation.toStringAsFixed(4) + ':c=none:ow=rotw(iw):oh=roth(ih)' +
+                    keyFilter + ',format=rgba,colorchannelmixer=aa=' + dynamicOpacity + ':eval=frame[ov' + j.toString() + ']');
+                  final x = width.toString() + '*' + centerXExpr + '-overlay_w/2';
+                  final y = height.toString() + '*' + centerYExpr + '-overlay_h/2';
                   filters.add("[" + previous + "][ov" + j.toString() + "]overlay=x=" + x + ":y=" + y +
                     ":enable='between(t," + safeStart.toStringAsFixed(3) + "," + endTime.toStringAsFixed(3) +
                     ")':eof_action=pass[" + next + "]");
@@ -1397,7 +1492,7 @@ jobs:
                         const SizedBox(height: 5),
                         Wrap(spacing: 6, runSpacing: 2, children: ['Montage','Bullet','Jump Cut','Hero','Smooth','Flash In'].map((name) => ChoiceChip(label: Text(name), selected: item.curvePreset == name, onSelected: (_) => setState(() => item.curvePreset = name), visualDensity: VisualDensity.compact)).toList()),
                         Container(height: 48, width: double.infinity, margin: const EdgeInsets.only(top: 5), padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5), decoration: BoxDecoration(color: const Color(0xFFF0ECFA), borderRadius: BorderRadius.circular(7)), child: CustomPaint(painter: SpeedCurvePainter(item.curvePreset))),
-                        const Text('Curve presets control preview playback; custom curve-point export is not supported yet.', style: TextStyle(fontSize: 10, color: Colors.black54))
+                        const Text('Curve presets are rendered as a smooth multi-segment speed ramp during export.', style: TextStyle(fontSize: 10, color: Colors.black54))
                       ]
                     ]
                   ]);
