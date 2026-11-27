@@ -1039,7 +1039,7 @@ jobs:
                   final c = clips[i];
                   final segments = clipCurveSegments[i];
                   final clipKeys = c.keyframes;
-                  final scaleExpr = keyframeExpression(clipKeys, 'scale', clipTimelineOffset, c.scale).replaceAll('t', '(t)');
+                  final scaleExpr = keyframeExpression(clipKeys, 'scale', clipTimelineOffset, c.scale);
                   final xExpr = keyframeExpression(clipKeys, 'x', clipTimelineOffset, c.positionX);
                   final yExpr = keyframeExpression(clipKeys, 'y', clipTimelineOffset, c.positionY);
                   final transform = clipKeys.isEmpty ? '' :
@@ -1051,14 +1051,28 @@ jobs:
                     ':(ow-iw)/2:(oh-ih)/2,setsar=1,fps=' + exportFps.toString() + ',format=yuv420p';
                   if (segments.isNotEmpty) {
                     final labels = <String>[];
+                    var segmentTimelineOffset = clipTimelineOffset;
                     for (var k = 0; k < segments.length; k++) {
                       final segment = segments[k];
                       final label = 'curve_' + i.toString() + '_' + k.toString();
+                      final segmentTransform = clipKeys.isEmpty ? '' :
+                        ',scale=w="ceil(' + width.toString() + '*max(0.1,' +
+                        keyframeExpression(clipKeys, 'scale', segmentTimelineOffset, c.scale) +
+                        ')/2)*2":h="ceil(' + height.toString() + '*max(0.1,' +
+                        keyframeExpression(clipKeys, 'scale', segmentTimelineOffset, c.scale) +
+                        ')/2)*2":eval=frame' +
+                        ',pad=w="max(iw,' + width.toString() + ')":h="max(ih,' + height.toString() +
+                        '):x="(ow-iw)*' + keyframeExpression(clipKeys, 'x', segmentTimelineOffset, c.positionX) +
+                        '":y="(oh-ih)*' + keyframeExpression(clipKeys, 'y', segmentTimelineOffset, c.positionY) +
+                        '":eval=frame,crop=' + width.toString() + ':' + height.toString() +
+                        ':x="(iw-ow)*' + keyframeExpression(clipKeys, 'x', segmentTimelineOffset, c.positionX) +
+                        '":y="(ih-oh)*' + keyframeExpression(clipKeys, 'y', segmentTimelineOffset, c.positionY) + '"';
                       filters.add('[' + i.toString() + ':v]trim=start=' + segment['offset']!.toStringAsFixed(4) +
                         ':duration=' + segment['source']!.toStringAsFixed(4) +
                         ',setpts=(PTS-STARTPTS)/' + segment['speed']!.toStringAsFixed(4) +
-                        videoTail + '[' + label + ']');
+                        videoTail + segmentTransform + '[' + label + ']');
                       labels.add('[' + label + ']');
+                      segmentTimelineOffset += segment['output']!;
                     }
                     filters.add(labels.join() + 'concat=n=' + segments.length.toString() + ':v=1:a=0[v' + i.toString() + ']');
                   } else {
