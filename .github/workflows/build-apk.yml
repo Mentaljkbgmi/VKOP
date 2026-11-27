@@ -462,7 +462,7 @@ jobs:
               stopSequence(refresh: false);
               previewTransform.value = Matrix4.identity();
               final token = ++loadToken; final old = player; player = null;
-              setState(() { selectedIndex = index; loading = true; selectedOverlay = -1; playhead = 0; });
+              setState(() { selectedIndex = index; loading = true; selectedOverlay = -1; selectedAudio = -1; playhead = 0; });
               if (old != null) await old.dispose();
               if (!mounted || token != loadToken) return;
               final item = clips[index];
@@ -499,19 +499,55 @@ jobs:
                   final position = offset % track.duration;
                   await audio.setVolume(track.muted ? 0 : track.volume.clamp(0, 1).toDouble());
                   await audio.seek(Duration(milliseconds: (position * 1000).round()));
-                  await audio.play();
+                  audio.play();
                 } catch (_) {}
+              }
+            }
+
+            KeyframePoint? keyframeValue(List<KeyframePoint> points, double at) {
+              if (points.isEmpty) return null;
+              final sorted = List<KeyframePoint>.of(points)..sort((a, b) => a.time.compareTo(b.time));
+              if (at <= sorted.first.time) return sorted.first;
+              if (at >= sorted.last.time) return sorted.last;
+              for (var i = 0; i < sorted.length - 1; i++) {
+                final a = sorted[i], b = sorted[i + 1];
+                if (at >= a.time && at <= b.time) {
+                  final span = (b.time - a.time).abs() < .0001 ? 1.0 : (at - a.time) / (b.time - a.time);
+                  double mix(double x, double y) => x + (y - x) * span;
+                  return KeyframePoint(time: at, scale: mix(a.scale, b.scale), x: mix(a.x, b.x), y: mix(a.y, b.y), opacity: mix(a.opacity, b.opacity), volume: mix(a.volume, b.volume));
+                }
+              }
+              return sorted.last;
+            }
+
+            void applyKeyframes() {
+              final at = projectTime;
+              final item = current;
+              if (item != null && item.keyframes.isNotEmpty) {
+                final k = keyframeValue(item.keyframes, at)!;
+                item.scale = k.scale.clamp(.1, 5).toDouble(); item.positionX = k.x.clamp(0, 1).toDouble(); item.positionY = k.y.clamp(0, 1).toDouble(); item.opacity = k.opacity.clamp(0, 1).toDouble();
+              }
+              for (final overlay in overlays) {
+                if (overlay.keyframes.isEmpty) continue;
+                final k = keyframeValue(overlay.keyframes, at)!;
+                overlay.widthFactor = k.scale.clamp(.12, .9).toDouble(); overlay.centerX = k.x.clamp(0, 1).toDouble(); overlay.centerY = k.y.clamp(0, 1).toDouble(); overlay.opacity = k.opacity.clamp(0, 1).toDouble();
+              }
+              for (final track in audioTracks) {
+                if (track.keyframes.isEmpty) continue;
+                final k = keyframeValue(track.keyframes, at)!;
+                final volume = track.muted ? 0.0 : k.volume.clamp(0, 1).toDouble();
+                audioPlayers[track.id]?.setVolume(volume);
               }
             }
 
             void addKeyframe() {
               final audio = currentAudio;
-              if (audio != null) {
+              if (activeTool == 'Audio' && audio != null) {
                 audio.keyframes.add(KeyframePoint(time: projectTime, volume: audio.volume));
                 setState(() {}); toast('Audio keyframe added at ${time(projectTime)}.'); return;
               }
               final overlay = currentOverlay;
-              if (overlay != null) {
+              if (activeTool == 'Overlay' && overlay != null) {
                 overlay.keyframes.add(KeyframePoint(time: projectTime, scale: overlay.widthFactor, x: overlay.centerX, y: overlay.centerY, opacity: overlay.opacity));
                 setState(() {}); toast('Overlay keyframe added at ${time(projectTime)}.'); return;
               }
@@ -554,6 +590,7 @@ jobs:
                 sequenceTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
                   if (!mounted || token != sequenceToken || !playingSequence) { timer.cancel(); return; }
                   setState(() => playhead = (playhead + (.1 * item.speed)).clamp(0, item.duration).toDouble());
+                  applyKeyframes();
                   if (playhead >= item.duration) { timer.cancel(); playAt(index + 1); }
                 });
                 return;
@@ -576,6 +613,7 @@ jobs:
                       p.setPlaybackSpeed(nextSpeed);
                     }
                   }
+                  applyKeyframes();
                   if (mounted) setState(() => playhead = relative);
                   if (pos >= item.trimEnd) { timer.cancel(); playAt(index + 1); }
                 });
@@ -790,6 +828,9 @@ Old chooseAudio removal            Future<void> addOverlay() async {
               if (filter == 'Warm') content = ColorFiltered(colorFilter: const ColorFilter.matrix([1.1,0,0,0,10,0,1,0,0,0,0,0,.9,0,0,0,0,0,1,0]), child: content);
               return LayoutBuilder(builder: (context, constraints) {
                 final size = Size(constraints.maxWidth, constraints.maxHeight);
+                final clipScale = item?.scale ?? 1.0;
+                final clipOpacity = item?.opacity ?? 1.0;
+                final clipOffset = Offset(size.width * ((item?.positionX ?? .5) - .5), size.height * ((item?.positionY ?? .5) - .5));
                 return Stack(clipBehavior: Clip.hardEdge, alignment: Alignment.center, children: [
                   InteractiveViewer(
                     transformationController: previewTransform,
@@ -803,7 +844,7 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                     child: SizedBox(
                       width: size.width,
                       height: size.height,
-                      child: Center(child: AspectRatio(aspectRatio: aspect, child: ColoredBox(color: Colors.black, child: Center(child: content)))),
+                      child: Center(child: AspectRatio(aspectRatio: aspect, child: ColoredBox(color: Colors.black, child: Center(child: Transform.translate(offset: clipOffset, child: Transform.scale(scale: clipScale, child: Opacity(opacity: clipOpacity.clamp(0, 1).toDouble(), child: content))))))),
                     ),
                   ),
                   Positioned(
@@ -873,6 +914,10 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                 )));
               },
             ));
+
+            Widget audioTimeline() => SizedBox(height: 38, child: audioTracks.isEmpty
+              ? const Align(alignment: Alignment.centerLeft, child: Text('No music tracks added', style: TextStyle(fontSize: 11, color: Colors.black45)))
+              : ListView(scrollDirection: Axis.horizontal, children: audioTracks.asMap().entries.map((entry) => GestureDetector(onTap: () => setState(() { selectedAudio = entry.key; selectedOverlay = -1; activeTool = 'Audio'; }), child: Container(width: 150, margin: const EdgeInsets.only(right: 6), padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5), decoration: BoxDecoration(color: selectedAudio == entry.key ? const Color(0xFFE5F5EA) : const Color(0xFFEAF7EF), borderRadius: BorderRadius.circular(7), border: Border.all(color: selectedAudio == entry.key ? Colors.green : Colors.black12)), child: Row(children: [const Icon(Icons.music_note, size: 15, color: Colors.green), const SizedBox(width: 5), Expanded(child: Text(entry.value.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10))), Text('${(entry.value.volume * 100).round()}%', style: const TextStyle(fontSize: 9))])))).toList()));
 
             Widget overlayTimeline() => SizedBox(height: 42, child: overlays.isEmpty
               ? const Align(alignment: Alignment.centerLeft, child: Text('No overlay layers yet', style: TextStyle(fontSize: 11, color: Colors.black45)))
@@ -984,6 +1029,8 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                   Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: timeline()),
                   Padding(padding: const EdgeInsets.fromLTRB(12, 5, 12, 2), child: Row(children: [const Text('OVERLAY TRACK', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: .8)), const Spacer(), Text('${overlays.length} layers', style: const TextStyle(fontSize: 10, color: Colors.black54))])),
                   Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: overlayTimeline()),
+                  Padding(padding: const EdgeInsets.fromLTRB(12, 4, 12, 0), child: Row(children: [const Text('AUDIO TRACK', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: .8)), const Spacer(), Text('${audioTracks.length} tracks', style: const TextStyle(fontSize: 10, color: Colors.black54))])),
+                  Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: audioTimeline()),
                   Container(width: double.infinity, constraints: const BoxConstraints(minHeight: 110, maxHeight: 190), margin: const EdgeInsets.fromLTRB(10, 5, 10, 0), padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(10)), child: SingleChildScrollView(child: toolPanel())),
                 ])),
                 Container(height: 65, padding: const EdgeInsets.symmetric(horizontal: 3), decoration: const BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: Color(0xFFE5E5EA)))), child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [toolButton('Edit', Icons.tune), toolButton('Audio', Icons.music_note), toolButton('Text', Icons.title), toolButton('Effects', Icons.auto_awesome), toolButton('Overlay', Icons.layers), toolButton('Speed', Icons.speed), toolButton('Canvas', Icons.crop)]))),
