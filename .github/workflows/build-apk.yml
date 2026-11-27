@@ -1329,7 +1329,7 @@ jobs:
                         const SizedBox(height: 5),
                         Wrap(spacing: 6, runSpacing: 2, children: ['Montage','Bullet','Jump Cut','Hero','Smooth','Flash In'].map((name) => ChoiceChip(label: Text(name), selected: item.curvePreset == name, onSelected: (_) => setState(() => item.curvePreset = name), visualDensity: VisualDensity.compact)).toList()),
                         Container(height: 48, width: double.infinity, margin: const EdgeInsets.only(top: 5), padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5), decoration: BoxDecoration(color: const Color(0xFFF0ECFA), borderRadius: BorderRadius.circular(7)), child: CustomPaint(painter: SpeedCurvePainter(item.curvePreset))),
-                        const Text('Curve changes playback speed across the selected video. Detailed curve-point editing and export rendering will be added in later milestones.', style: TextStyle(fontSize: 10, color: Colors.black54))
+                        const Text('Curve presets control preview playback; custom curve-point export is not supported yet.', style: TextStyle(fontSize: 10, color: Colors.black54))
                       ]
                     ]
                   ]);
@@ -1346,7 +1346,7 @@ jobs:
                     const Text('FILTERS & EFFECTS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                     Wrap(spacing: 5, children: ['None','B&W','Warm'].map((f) => ChoiceChip(label: Text(f), selected: filter == f, onSelected: (_) => setState(() => filter = f), visualDensity: VisualDensity.compact)).toList()),
                     Row(children: [const Text('Motion blur', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: 1, value: motionBlurAmount, onChanged: (v) => setState(() => motionBlurAmount = v))), Text('${(motionBlurAmount*100).round()}%', style: const TextStyle(fontSize: 10))]),
-                    const Text('Motion blur preview control is stored; rendered blur will be added with the FFmpeg filter pipeline.', style: TextStyle(fontSize: 10, color: Colors.black54))
+                    const Text('Motion blur is rendered during export using temporal frame blending.', style: TextStyle(fontSize: 10, color: Colors.black54))
                   ]);
                 case 'Adjust':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1384,18 +1384,18 @@ jobs:
                     SwitchListTile(contentPadding: EdgeInsets.zero, dense: true, title: const Text('Enable green-screen key', style: TextStyle(fontSize: 11)), value: chromaKeyEnabled, onChanged: (v) => setState(() => chromaKeyEnabled = v)),
                     Row(children: [const Text('Similarity', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: 1, value: chromaSimilarity, onChanged: (v) => setState(() => chromaSimilarity = v)))]),
                     Row(children: [const Text('Blend', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: .5, value: chromaBlend, onChanged: (v) => setState(() => chromaBlend = v)))]),
-                    const Text('Key settings are saved in the project preview; actual pixel removal will be enabled with the chromakey FFmpeg render filter.', style: TextStyle(fontSize: 10, color: Colors.black54))
+                    const Text('Chroma key is rendered on overlay layers during export; the current key color is green.', style: TextStyle(fontSize: 10, color: Colors.black54))
                   ]);
                 case 'Voice Effects':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const Text('VOICE EFFECTS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                     Wrap(spacing: 5, children: ['Normal','Deep','High','Robot','Echo'].map((v) => ChoiceChip(label: Text(v), selected: voiceEffect == v, onSelected: (_) => setState(() => voiceEffect = v), visualDensity: VisualDensity.compact)).toList()),
-                    const Text('Preview voice effects require an audio-processing playback chain; final processing will use FFmpeg audio filters.', style: TextStyle(fontSize: 10, color: Colors.black54))
+                    const Text('Voice effects are applied to original clip audio during export.', style: TextStyle(fontSize: 10, color: Colors.black54))
                   ]);
                 case 'Noise Reduction':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     SwitchListTile(contentPadding: EdgeInsets.zero, dense: true, title: const Text('Reduce background noise', style: TextStyle(fontSize: 11)), value: noiseReductionEnabled, onChanged: (v) => setState(() => noiseReductionEnabled = v)),
-                    const Text('Noise reduction is a non-AI audio filter. It will be wired into the audio render chain before export.', style: TextStyle(fontSize: 10, color: Colors.black54))
+                    const Text('Noise reduction is applied to original clip audio during export.', style: TextStyle(fontSize: 10, color: Colors.black54))
                   ]);
                 case 'Transform':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
