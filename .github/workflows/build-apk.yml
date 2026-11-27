@@ -1193,6 +1193,36 @@ jobs:
                     }
                   }
                   final keyframes = input['keyframes'] as List<KeyframePoint>? ?? <KeyframePoint>[];
+                  final curveSegments = input['curveSegments'] as List<Map<String, double>>? ?? <Map<String, double>>[];
+                  if (curveSegments.isNotEmpty) {
+                    final splitLabels = List.generate(curveSegments.length, (k) => '[audio_split_' + i.toString() + '_' + k.toString() + ']').join();
+                    filters.add('[' + audioInputIndex.toString() + ':a]asplit=' + curveSegments.length.toString() + splitLabels);
+                    var curveAudioOffset = 0.0;
+                    for (var k = 0; k < curveSegments.length; k++) {
+                      final segment = curveSegments[k];
+                      final segmentSpeed = segment['speed']!.clamp(.1, 16).toDouble();
+                      final segmentTempo = <String>[];
+                      var segmentFactor = segmentSpeed;
+                      while (segmentFactor < .5) { segmentTempo.add('atempo=0.5'); segmentFactor /= .5; }
+                      while (segmentFactor > 2) { segmentTempo.add('atempo=2'); segmentFactor /= 2; }
+                      segmentTempo.add('atempo=' + segmentFactor.toStringAsFixed(4));
+                      final segmentVolume = keyframes.isEmpty
+                        ? volume.toStringAsFixed(3)
+                        : keyframeVolumeExpression(keyframes, (input['start'] as double) + curveAudioOffset);
+                      final segmentLabel = 'aud' + i.toString() + '_curve_' + k.toString();
+                      final segmentStartMs = (((input['start'] as double) + curveAudioOffset) * 1000).round();
+                      final segmentChain = <String>[...segmentTempo, ...audioEffects, 'volume=' + segmentVolume + ':eval=frame'];
+                      filters.add('[audio_split_' + i.toString() + '_' + k.toString() + ']atrim=start=' +
+                        segment['offset']!.toStringAsFixed(4) + ':duration=' + segment['source']!.toStringAsFixed(4) +
+                        ',asetpts=PTS-STARTPTS,' + segmentChain.join(',') +
+                        ',adelay=' + segmentStartMs.toString() + '|' + segmentStartMs.toString() +
+                        ',apad,atrim=duration=' + projectDuration.toStringAsFixed(3) + '[' + segmentLabel + ']');
+                      audioLabels.add('[' + segmentLabel + ']');
+                      curveAudioOffset += segment['output']!;
+                    }
+                    audioInputIndex++;
+                    continue;
+                  }
                   final volumeExpression = keyframes.isEmpty
                     ? volume.toStringAsFixed(3)
                     : keyframeVolumeExpression(keyframes, input['start'] as double);
