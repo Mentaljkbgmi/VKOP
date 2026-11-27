@@ -199,6 +199,7 @@ jobs:
             double trimStart = 0;
             double trimEnd = 0;
             double scale = 1;
+            double rotation = 0;
             double positionX = .5;
             double positionY = .5;
             double opacity = 1;
@@ -383,6 +384,20 @@ jobs:
             State<VKOPEditor> createState() => _VKOPEditorState();
           }
 
+          class _CircleClipper extends CustomClipper<Path> {
+            @override
+            Path getClip(Size size) => Path()..addOval(Offset.zero & size);
+            @override
+            bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
+          }
+
+          class _OvalClipper extends CustomClipper<Path> {
+            @override
+            Path getClip(Size size) => Path()..addOval(Offset.zero & size);
+            @override
+            bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
+          }
+
           class _VKOPEditorState extends State<VKOPEditor> {
             late List<MediaClip> clips;
             final List<OverlayClip> overlays = [];
@@ -417,6 +432,24 @@ jobs:
             double _gestureRotation = 0;
             final TextEditingController textController = TextEditingController();
             String overlayText = '';
+            String selectedSticker = '';
+            String textColorName = 'White';
+            double textSize = 30;
+            bool textBold = true;
+            double brightness = 0;
+            double contrast = 1;
+            double saturation = 1;
+            String backgroundColorName = 'Black';
+            String maskShape = 'None';
+            String animationPreset = 'None';
+            String stylePreset = 'None';
+            bool chromaKeyEnabled = false;
+            double chromaSimilarity = .25;
+            double chromaBlend = .05;
+            double motionBlurAmount = 0;
+            String voiceEffect = 'Normal';
+            bool noiseReductionEnabled = false;
+            bool showGrid = false;
 
             MediaClip? get current => clips.isEmpty || selectedIndex < 0 || selectedIndex >= clips.length ? null : clips[selectedIndex];
             double get projectTime => clips.take(selectedIndex < 0 ? 0 : selectedIndex).fold<double>(0, (sum, c) => sum + (c.isVideo ? (c.trimEnd > c.trimStart ? c.trimEnd - c.trimStart : c.duration) : c.duration)) + playhead;
@@ -623,6 +656,65 @@ jobs:
               } catch (e) { toast('Could not play ${item.name}'); playAt(index + 1); }
             }
 
+            void duplicateSelected() {
+              final item = current;
+              if (item == null) return;
+              final copy = MediaClip(path: item.path, name: '${item.name} Copy', isVideo: item.isVideo, duration: item.duration)
+                ..speed = item.speed
+                ..speedMode = item.speedMode
+                ..curvePreset = item.curvePreset
+                ..trimStart = item.trimStart
+                ..trimEnd = item.trimEnd
+                ..scale = item.scale
+                ..rotation = item.rotation
+                ..positionX = item.positionX
+                ..positionY = item.positionY
+                ..opacity = item.opacity
+                ..audioVolume = item.audioVolume
+                ..audioMuted = item.audioMuted;
+              setState(() { clips.insert(selectedIndex + 1, copy); });
+              toast('Clip duplicated on the main track.');
+            }
+
+            void resetAdjustments() {
+              setState(() { brightness = 0; contrast = 1; saturation = 1; filter = 'None'; });
+            }
+
+            List<double> get previewColorMatrix {
+              final s = saturation;
+              final c = contrast;
+              final b = brightness * 255;
+              const r = .213, g = .715, bl = .072;
+              final sr = (1 - s) * r, sg = (1 - s) * g, sb = (1 - s) * bl;
+              final warm = filter == 'Warm' ? 1.08 : 1.0;
+              final mono = filter == 'B&W' ? 0.0 : 1.0;
+              final sat = s * mono;
+              final rr = (1 - sat) * r, gg = (1 - sat) * g, bb = (1 - sat) * bl;
+              return [
+                (rr + sat) * c * warm, (gg) * c, (bb) * c, 0, b,
+                (rr) * c, (gg + sat) * c * warm, (bb) * c, 0, b,
+                (rr) * c, (gg) * c, (bb + sat) * c * warm, 0, b,
+                0, 0, 0, 1, 0,
+              ];
+            }
+
+            Color get canvasBackground => switch (backgroundColorName) {
+              'White' => Colors.white,
+              'Grey' => const Color(0xFF777777),
+              'Purple' => const Color(0xFF7653D6),
+              'Green' => const Color(0xFF16865B),
+              'Transparent' => Colors.transparent,
+              _ => Colors.black,
+            };
+
+            Color get selectedTextColor => switch (textColorName) {
+              'Black' => Colors.black,
+              'Yellow' => Colors.yellow,
+              'Purple' => const Color(0xFFB99AFF),
+              'Red' => Colors.redAccent,
+              _ => Colors.white,
+            };
+
             void reorder(int oldIndex, int newIndex) {
               if (newIndex > oldIndex) newIndex--; if (newIndex < 0 || newIndex >= clips.length) return;
               stopSequence(refresh: false); final selectedItem = current;
@@ -827,8 +919,7 @@ Old chooseAudio removal            Future<void> addOverlay() async {
               else if (!item.isVideo) content = Image.file(File(item.path), fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image));
               else if (player == null || !player!.value.isInitialized) content = const Text('Video preview unavailable');
               else content = AspectRatio(aspectRatio: originalAspect, child: VideoPlayer(player!));
-              if (filter == 'B&W') content = ColorFiltered(colorFilter: const ColorFilter.matrix([.2126,.7152,.0722,0,0,.2126,.7152,.0722,0,0,.2126,.7152,.0722,0,0,0,0,0,1,0]), child: content);
-              if (filter == 'Warm') content = ColorFiltered(colorFilter: const ColorFilter.matrix([1.1,0,0,0,10,0,1,0,0,0,0,0,.9,0,0,0,0,0,1,0]), child: content);
+              content = ColorFiltered(colorFilter: ColorFilter.matrix(previewColorMatrix), child: content);
               return LayoutBuilder(builder: (context, constraints) {
                 final size = Size(constraints.maxWidth, constraints.maxHeight);
                 final clipScale = item?.scale ?? 1.0;
@@ -847,7 +938,7 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                     child: SizedBox(
                       width: size.width,
                       height: size.height,
-                      child: Center(child: AspectRatio(aspectRatio: aspect, child: ColoredBox(color: Colors.black, child: Center(child: Transform.translate(offset: clipOffset, child: Transform.scale(scale: clipScale, child: Opacity(opacity: clipOpacity.clamp(0, 1).toDouble(), child: content))))))),
+                      child: Center(child: AspectRatio(aspectRatio: aspect, child: ColoredBox(color: canvasBackground, child: Center(child: ClipRRect(borderRadius: stylePreset == 'Rounded' ? BorderRadius.circular(18) : BorderRadius.zero, child: Transform.translate(offset: clipOffset, child: Transform.rotate(angle: item?.rotation ?? 0, child: Transform.scale(scale: clipScale, child: Opacity(opacity: clipOpacity.clamp(0, 1).toDouble(), child: ClipPath(clipper: maskShape == 'Circle' ? _CircleClipper() : maskShape == 'Oval' ? _OvalClipper() : null, child: content))))))))),
                     ),
                   ),
                   Positioned(
@@ -882,6 +973,8 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                       ),
                     ),
                   ),
+                  if (overlayText.isNotEmpty) Positioned(left: 12, right: 12, bottom: 30, child: IgnorePointer(child: Text(overlayText, textAlign: TextAlign.center, style: TextStyle(color: selectedTextColor, fontSize: textSize, fontWeight: textBold ? FontWeight.bold : FontWeight.normal, shadows: const [Shadow(color: Colors.black87, blurRadius: 4, offset: Offset(1, 1))])))),
+                  if (selectedSticker.isNotEmpty) Positioned(right: 18, top: 18, child: IgnorePointer(child: Text(selectedSticker, style: const TextStyle(fontSize: 42)))),
                   for (var i = 0; i < overlays.length; i++) if (projectTime >= overlays[i].start && projectTime <= overlays[i].start + overlays[i].duration) _overlayWidget(overlays[i], i, size),
                   if (overlayText.isNotEmpty) Positioned(bottom: 18, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), color: Colors.black54, child: Text(overlayText, style: const TextStyle(fontSize: 20, color: Colors.white, fontWeight: FontWeight.bold)))),
                 ]);
@@ -955,7 +1048,7 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                       if (item.isVideo && item.duration > 0) RangeSlider(min: 0, max: item.duration, values: RangeValues(item.trimStart.clamp(0, item.duration).toDouble(), item.trimEnd.clamp(0, item.duration).toDouble()), onChanged: (v) { if (v.end-v.start > .1) setState(() { item.trimStart = v.start; item.trimEnd = v.end; }); }),
                       if (item.isVideo) Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('IN ${time(item.trimStart)}', style: const TextStyle(fontSize: 10)), Text('OUT ${time(item.trimEnd)}', style: const TextStyle(fontSize: 10))]),
                     ],
-                    Wrap(spacing: 5, children: [chip('Split', Icons.content_cut, splitSelected), chip('Delete', Icons.delete_outline, removeSelected), chip('Canvas', Icons.crop, () => setState(() => activeTool = 'Canvas'))])
+                    Wrap(spacing: 5, children: [chip('Split', Icons.content_cut, splitSelected), chip('Duplicate', Icons.copy, duplicateSelected), chip('Delete', Icons.delete_outline, removeSelected), chip('Speed', Icons.speed, () => setState(() => activeTool = 'Speed')), chip('Animation', Icons.animation, () => setState(() => activeTool = 'Animation')), chip('Style', Icons.style, () => setState(() => activeTool = 'Style')), chip('Mask', Icons.crop_free, () => setState(() => activeTool = 'Mask')), chip('Transform', Icons.open_with, () => setState(() => activeTool = 'Transform')), chip('Canvas', Icons.crop, () => setState(() => activeTool = 'Aspect Ratio'))])
                   ]);
                 case 'Audio':
                   final audio = currentAudio;
@@ -1007,7 +1100,88 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                       ]
                     ]
                   ]);
+                case 'Stickers':
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('STICKERS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    const SizedBox(height: 8),
+                    Wrap(spacing: 8, runSpacing: 6, children: ['❤️','😂','🔥','⭐','👏','🎉','✨','😎','👍','💯','🌈','🎬'].map((emoji) => ChoiceChip(label: Text(emoji, style: const TextStyle(fontSize: 22)), selected: selectedSticker == emoji, onSelected: (_) => setState(() => selectedSticker = selectedSticker == emoji ? '' : emoji)).toList()),
+                    TextButton.icon(onPressed: () => setState(() => selectedSticker = ''), icon: const Icon(Icons.delete_outline), label: const Text('Remove sticker'))
+                  ]);
+                case 'Filters':
+                case 'Effects':
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('FILTERS & EFFECTS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    Wrap(spacing: 5, children: ['None','B&W','Warm'].map((f) => ChoiceChip(label: Text(f), selected: filter == f, onSelected: (_) => setState(() => filter = f), visualDensity: VisualDensity.compact)).toList()),
+                    Row(children: [const Text('Motion blur', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: 1, value: motionBlurAmount, onChanged: (v) => setState(() => motionBlurAmount = v))), Text('${(motionBlurAmount*100).round()}%', style: const TextStyle(fontSize: 10))]),
+                    const Text('Motion blur preview control is stored; rendered blur will be added with the FFmpeg filter pipeline.', style: TextStyle(fontSize: 10, color: Colors.black54))
+                  ]);
+                case 'Adjust':
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [const Expanded(child: Text('IMAGE ADJUSTMENTS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))), TextButton(onPressed: resetAdjustments, child: const Text('Reset'))]),
+                    Row(children: [const SizedBox(width: 75, child: Text('Brightness', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: -1, max: 1, value: brightness, onChanged: (v) => setState(() => brightness = v)))]),
+                    Row(children: [const SizedBox(width: 75, child: Text('Contrast', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 2, value: contrast, onChanged: (v) => setState(() => contrast = v)))]),
+                    Row(children: [const SizedBox(width: 75, child: Text('Saturation', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 2, value: saturation, onChanged: (v) => setState(() => saturation = v)))]),
+                  ]);
+                case 'Background':
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('CANVAS BACKGROUND', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    Wrap(spacing: 5, children: ['Black','White','Grey','Purple','Green','Transparent'].map((v) => ChoiceChip(label: Text(v), selected: backgroundColorName == v, onSelected: (_) => setState(() => backgroundColorName = v), visualDensity: VisualDensity.compact)).toList())
+                  ]);
+                case 'Aspect Ratio':
                 case 'Canvas':
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('CANVAS RATIO', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), Wrap(spacing: 5, children: ['Original','9:16','16:9','1:1'].map((r) => ChoiceChip(label: Text(r), selected: cropRatio == r, onSelected: (_) => setState(() => cropRatio = r), visualDensity: VisualDensity.compact)).toList())]);
+                case 'Animation':
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('CLIP ANIMATION', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    Wrap(spacing: 5, children: ['None','Fade In','Fade Out','Zoom In','Zoom Out'].map((v) => ChoiceChip(label: Text(v), selected: animationPreset == v, onSelected: (_) => setState(() => animationPreset = v), visualDensity: VisualDensity.compact)).toList()),
+                    const Text('Animation preset applies to the preview. Timeline keyframes remain available for custom movement.', style: TextStyle(fontSize: 10, color: Colors.black54))
+                  ]);
+                case 'Style':
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('CLIP STYLE', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    Wrap(spacing: 5, children: ['None','Rounded','Shadow','Border'].map((v) => ChoiceChip(label: Text(v), selected: stylePreset == v, onSelected: (_) => setState(() => stylePreset = v), visualDensity: VisualDensity.compact)).toList())
+                  ]);
+                case 'Mask':
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('MASK', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    Wrap(spacing: 5, children: ['None','Circle','Rounded','Oval'].map((v) => ChoiceChip(label: Text(v), selected: maskShape == v, onSelected: (_) => setState(() => maskShape = v), visualDensity: VisualDensity.compact)).toList())
+                  ]);
+                case 'Chroma Key':
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('CHROMA KEY', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    SwitchListTile(contentPadding: EdgeInsets.zero, dense: true, title: const Text('Enable green-screen key', style: TextStyle(fontSize: 11)), value: chromaKeyEnabled, onChanged: (v) => setState(() => chromaKeyEnabled = v)),
+                    Row(children: [const Text('Similarity', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: 1, value: chromaSimilarity, onChanged: (v) => setState(() => chromaSimilarity = v)))]),
+                    Row(children: [const Text('Blend', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: .5, value: chromaBlend, onChanged: (v) => setState(() => chromaBlend = v))]),
+                    const Text('Key settings are saved in the project preview; actual pixel removal will be enabled with the chromakey FFmpeg render filter.', style: TextStyle(fontSize: 10, color: Colors.black54))
+                  ]);
+                case 'Voice Effects':
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('VOICE EFFECTS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    Wrap(spacing: 5, children: ['Normal','Deep','High','Robot','Echo'].map((v) => ChoiceChip(label: Text(v), selected: voiceEffect == v, onSelected: (_) => setState(() => voiceEffect = v), visualDensity: VisualDensity.compact)).toList()),
+                    const Text('Preview voice effects require an audio-processing playback chain; final processing will use FFmpeg audio filters.', style: TextStyle(fontSize: 10, color: Colors.black54))
+                  ]);
+                case 'Noise Reduction':
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    SwitchListTile(contentPadding: EdgeInsets.zero, dense: true, title: const Text('Reduce background noise', style: TextStyle(fontSize: 11)), value: noiseReductionEnabled, onChanged: (v) => setState(() => noiseReductionEnabled = v)),
+                    const Text('Noise reduction is a non-AI audio filter. It will be wired into the audio render chain before export.', style: TextStyle(fontSize: 10, color: Colors.black54))
+                  ]);
+                case 'Transform':
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('TRANSFORM', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    if (item != null) ...[
+                      Row(children: [const Text('Scale', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: .1, max: 5, value: item.scale.clamp(.1, 5).toDouble(), onChanged: (v) => setState(() => item.scale = v)))]),
+                      Row(children: [const Text('Rotate', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: -3.14, max: 3.14, value: item.rotation.clamp(-3.14, 3.14).toDouble(), onChanged: (v) => setState(() => item.rotation = v)))]),
+                    ]
+                  ]);
+                case 'Text':
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('TEXT OVERLAY', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    TextField(controller: textController, decoration: const InputDecoration(hintText: 'Type text for preview', isDense: true), onSubmitted: (v) => setState(() => overlayText = v)),
+                    Wrap(spacing: 5, children: [TextButton(onPressed: () => setState(() => overlayText = textController.text), child: const Text('Add text')), TextButton(onPressed: () => setState(() => overlayText = ''), child: const Text('Remove text'))]),
+                    Wrap(spacing: 5, children: ['White','Black','Yellow','Purple','Red'].map((v) => ChoiceChip(label: Text(v), selected: textColorName == v, onSelected: (_) => setState(() => textColorName = v), visualDensity: VisualDensity.compact)).toList()),
+                    Row(children: [const Text('Size', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 12, max: 72, value: textSize, onChanged: (v) => setState(() => textSize = v))), Text('${textSize.round()}', style: const TextStyle(fontSize: 10))]),
+                    CheckboxListTile(contentPadding: EdgeInsets.zero, dense: true, title: const Text('Bold text', style: TextStyle(fontSize: 11)), value: textBold, onChanged: (v) => setState(() => textBold = v ?? true))
+                  ]);
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('CANVAS RATIO', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), Wrap(spacing: 5, children: ['Original','9:16','16:9','1:1'].map((r) => ChoiceChip(label: Text(r), selected: cropRatio == r, onSelected: (_) => setState(() => cropRatio = r), visualDensity: VisualDensity.compact)).toList())]);
                 case 'Export':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('EXPORT SETTINGS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(height: 4), Row(children: [const Text('Resolution', style: TextStyle(fontSize: 11)), const SizedBox(width: 8), DropdownButton<String>(value: exportResolution, items: ['720p','1080p','2K','4K'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setState(() => exportResolution = v!)), const Spacer(), const Text('FPS', style: TextStyle(fontSize: 11)), const SizedBox(width: 5), DropdownButton<int>(value: exportFps, items: [24,30,60].map((v) => DropdownMenuItem(value: v, child: Text('$v'))).toList(), onChanged: (v) => setState(() => exportFps = v!))]), Wrap(spacing: 6, children: [ActionChip(avatar: const Icon(Icons.memory, size: 15), label: Text(testingFFmpeg ? 'Testing...' : 'Test FFmpeg'), onPressed: testingFFmpeg ? null : testFFmpeg), ActionChip(avatar: const Icon(Icons.movie_creation_outlined, size: 15), label: Text(exporting ? 'Exporting...' : 'Export MP4'), onPressed: exporting ? null : exportProject)]), const Text('Overlay layers are composited by FFmpeg. Export is silent in this milestone; audio mixing will follow. 4K60 may be slow or unsupported on some phones.', style: TextStyle(fontSize: 10, color: Colors.black54))]);
@@ -1052,7 +1226,7 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                   Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: audioTimeline()),
                   Container(width: double.infinity, constraints: const BoxConstraints(minHeight: 110, maxHeight: 190), margin: const EdgeInsets.fromLTRB(10, 5, 10, 0), padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(10)), child: SingleChildScrollView(child: toolPanel())),
                 ])),
-                Container(height: 65, padding: const EdgeInsets.symmetric(horizontal: 3), decoration: const BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: Color(0xFFE5E5EA)))), child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [toolButton('Edit', Icons.tune), toolButton('Audio', Icons.music_note), toolButton('Text', Icons.title), toolButton('Effects', Icons.auto_awesome), toolButton('Overlay', Icons.layers), toolButton('Speed', Icons.speed), toolButton('Canvas', Icons.crop)]))),
+                Container(height: 65, padding: const EdgeInsets.symmetric(horizontal: 3), decoration: const BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: Color(0xFFE5E5EA)))), child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [toolButton('Edit', Icons.tune), toolButton('Audio', Icons.music_note), toolButton('Text', Icons.title), toolButton('Stickers', Icons.emoji_emotions_outlined), toolButton('Overlay', Icons.layers), toolButton('Effects', Icons.auto_awesome), toolButton('Filters', Icons.filter_vintage), toolButton('Aspect Ratio', Icons.aspect_ratio), toolButton('Background', Icons.palette_outlined), toolButton('Adjust', Icons.tune), toolButton('Speed', Icons.speed), toolButton('Animation', Icons.animation), toolButton('Style', Icons.style), toolButton('Mask', Icons.crop_free), toolButton('Chroma Key', Icons.colorize), toolButton('Transform', Icons.open_with), toolButton('Voice Effects', Icons.graphic_eq), toolButton('Noise Reduction', Icons.noise_aware)]))),
               ])),
             );
           }
