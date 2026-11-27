@@ -600,7 +600,7 @@ jobs:
 
             Future<void> chooseAudio() async {
               try {
-                final files = await FilePicker.pickFiles(type: FileType.audio, allowMultiple: true);
+                final files = await FilePicker.pickFiles(type: FileType.audio);
                 if (files.isEmpty) return;
                 final added = <AudioClip>[];
                 for (final file in files) {
@@ -945,9 +945,9 @@ jobs:
                     ':-1,rotate=' + o.rotation.toStringAsFixed(4) + ':c=none:ow=rotw(iw):oh=roth(ih),format=rgba[ov' + j.toString() + ']');
                   final x = width.toString() + '*' + o.centerX.toStringAsFixed(4) + '-overlay_w/2';
                   final y = height.toString() + '*' + o.centerY.toStringAsFixed(4) + '-overlay_h/2';
-                  filters.add('[' + previous + '][ov' + j.toString() + ']overlay=x=' + x + ':y=' + y +
-                    ':enable=\\'between(t,' + safeStart.toStringAsFixed(3) + ',' + endTime.toStringAsFixed(3) +
-                    ')\\':eof_action=pass[' + next + ']');
+                  filters.add("[" + previous + "][ov" + j.toString() + "]overlay=x=" + x + ":y=" + y +
+                    ":enable='between(t," + safeStart.toStringAsFixed(3) + "," + endTime.toStringAsFixed(3) +
+                    ")':eof_action=pass[" + next + "]");
                   previous = next;
                 }
 
