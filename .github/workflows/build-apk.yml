@@ -494,7 +494,7 @@ jobs:
                   final d = sourceDuration / speed.clamp(.1, 16);
                   durations.add(d);
                   if (c.isVideo) { args.addAll(['-ss', c.trimStart.toStringAsFixed(3), '-i', c.path]); }
-                  else { args.addAll(['-loop', '1', '-t', d.toStringAsFixed(3), '-i', c.path]); }
+                  else { args.addAll(['-loop', '1', '-t', sourceDuration.toStringAsFixed(3), '-i', c.path]); }
                 }
                 for (final o in overlays) {
                   if (o.isVideo) { args.addAll(['-stream_loop', '-1', '-i', o.path]); }
