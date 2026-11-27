@@ -161,10 +161,45 @@ jobs:
             final Object id = Object();
             double duration;
             double speed = 1;
+            String speedMode = 'Normal';
+            String curvePreset = 'Montage';
             double trimStart = 0;
             double trimEnd = 0;
 
             MediaClip({required this.path, required this.name, required this.isVideo, this.duration = 3});
+          }
+
+          class SpeedCurvePainter extends CustomPainter {
+            final String preset;
+            SpeedCurvePainter(this.preset);
+
+            @override
+            void paint(Canvas canvas, Size size) {
+              final grid = Paint()..color = const Color(0xFFD8D1E8)..strokeWidth = 1;
+              for (var i = 1; i < 4; i++) {
+                final y = size.height * i / 4;
+                canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+              }
+              final values = switch (preset) {
+                'Bullet' => [1.0, .25, .25, 1.0],
+                'Jump Cut' => [1.0, 4.0, 4.0, 1.0],
+                'Hero' => [1.0, .5, .5, 1.0],
+                'Flash In' => [.25, 1.0, 2.0, 4.0],
+                _ => [1.0, 3.0, .5, 1.0],
+              };
+              final path = Path();
+              for (var i = 0; i < values.length; i++) {
+                final x = size.width * i / (values.length - 1);
+                final normalized = (1 - (values[i] / 4)).clamp(0.05, .95);
+                final y = size.height * normalized;
+                if (i == 0) { path.moveTo(x, y); } else { path.lineTo(x, y); }
+                canvas.drawCircle(Offset(x, y), 3.5, Paint()..color = purple);
+              }
+              canvas.drawPath(path, Paint()..color = purple..style = PaintingStyle.stroke..strokeWidth = 2.5..strokeCap = StrokeCap.round);
+            }
+
+            @override
+            bool shouldRepaint(covariant SpeedCurvePainter oldDelegate) => oldDelegate.preset != preset;
           }
 
           class OverlayClip {
@@ -327,6 +362,23 @@ jobs:
             String time(double s) { final n = s.floor(); return '${(n ~/ 60).toString().padLeft(2,'0')}:${(n % 60).toString().padLeft(2,'0')}'; }
             double get aspect => cropRatio == '9:16' ? 9/16 : cropRatio == '16:9' ? 16/9 : cropRatio == '1:1' ? 1 : (player?.value.isInitialized == true ? player!.value.aspectRatio : 16/9);
 
+            double curveSpeedAt(MediaClip item, double sourcePosition) {
+              final length = (item.trimEnd - item.trimStart).clamp(.1, 999999).toDouble();
+              final t = ((sourcePosition - item.trimStart) / length).clamp(0.0, 1.0);
+              List<double> points;
+              switch (item.curvePreset) {
+                case 'Bullet': points = [1, .25, .25, 1]; break;
+                case 'Jump Cut': points = [1, 4, 4, 1]; break;
+                case 'Hero': points = [1, .5, .5, 1]; break;
+                case 'Flash In': points = [.25, 1, 2, 4]; break;
+                default: points = [1, 3, .5, 1]; // Montage
+              }
+              final scaled = t * (points.length - 1);
+              final index = scaled.floor().clamp(0, points.length - 2);
+              final fraction = scaled - index;
+              return (points[index] + (points[index + 1] - points[index]) * fraction).clamp(.1, 16).toDouble();
+            }
+
             void stopSequence({bool refresh = true}) {
               playingSequence = false; sequenceToken++; sequenceTimer?.cancel(); sequenceTimer = null; player?.pause();
               if (refresh && mounted) setState(() {});
@@ -378,10 +430,20 @@ jobs:
                 if (!mounted || token != sequenceToken || !playingSequence) { await next.dispose(); return; }
                 item.duration = next.value.duration.inMilliseconds / 1000; if (item.trimEnd <= 0 || item.trimEnd > item.duration) item.trimEnd = item.duration;
                 player = next; await next.seekTo(Duration(milliseconds: (item.trimStart * 1000).round())); await next.setPlaybackSpeed(item.speed); await next.play(); setState(() => loading = false);
+                var appliedSpeed = item.speed;
                 sequenceTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
                   if (!mounted || token != sequenceToken || !playingSequence) { timer.cancel(); return; }
                   final p = player; if (p == null || !p.value.isInitialized) return;
-                  final pos = p.value.position.inMilliseconds / 1000; final relative = (pos - item.trimStart).clamp(0, item.duration).toDouble(); if (mounted) setState(() => playhead = relative);
+                  final pos = p.value.position.inMilliseconds / 1000;
+                  final relative = (pos - item.trimStart).clamp(0, item.duration).toDouble();
+                  if (item.speedMode == 'Curve') {
+                    final nextSpeed = curveSpeedAt(item, pos);
+                    if ((nextSpeed - appliedSpeed).abs() >= .06) {
+                      appliedSpeed = nextSpeed;
+                      p.setPlaybackSpeed(nextSpeed);
+                    }
+                  }
+                  if (mounted) setState(() => playhead = relative);
                   if (pos >= item.trimEnd) { timer.cancel(); playAt(index + 1); }
                 });
               } catch (e) { toast('Could not play ${item.name}'); playAt(index + 1); }
@@ -628,10 +690,28 @@ jobs:
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [const Expanded(child: Text('OVERLAY LAYERS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))), OutlinedButton.icon(onPressed: addOverlay, icon: const Icon(Icons.add, size: 16), label: const Text('Add layer'))]), if (overlay == null) const Text('Add a photo, video or GIF. Select its layer, then drag or pinch it on the preview.', style: TextStyle(fontSize: 10, color: Colors.black54)) else ...[Text(overlay.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)), Row(children: [const Text('Start', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: 120, value: overlay.start.clamp(0, 120).toDouble(), onChanged: (v) => setState(() => overlay.start = v))), Text('${overlay.start.toStringAsFixed(1)}s', style: const TextStyle(fontSize: 10))]), Row(children: [const Text('Duration', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: .5, max: 30, value: overlay.duration.clamp(.5, 30).toDouble(), onChanged: (v) => setState(() => overlay.duration = v))), Text('${overlay.duration.toStringAsFixed(1)}s', style: const TextStyle(fontSize: 10))]), Row(children: [const Text('Size', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: .12, max: .9, value: overlay.widthFactor.clamp(.12, .9).toDouble(), onChanged: (v) => setState(() => overlay.widthFactor = v))), IconButton(onPressed: deleteOverlay, icon: const Icon(Icons.delete_outline, color: Colors.red))])]]);
                 case 'Speed':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(item == null ? 'SELECT A CLIP' : 'CLIP SPEED ${item.speed.toStringAsFixed(2)}x', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                    if (item != null) Slider(min: .1, max: 16, divisions: 159, value: item.speed.clamp(.1, 16).toDouble(), onChanged: (v) { setState(() { item.speed = v; speed = v; }); final p = player; if (p != null && p.value.isInitialized) p.setPlaybackSpeed(v); }),
-                    if (item != null) Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('0.1x Slow', style: TextStyle(fontSize: 10, color: Colors.black54)), Text(item.speed < 1 ? 'SLOW MOTION' : item.speed > 1 ? 'FAST MOTION' : 'NORMAL', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: purple)), const Text('16x Fast', style: TextStyle(fontSize: 10, color: Colors.black54))]),
-                    if (item != null) Wrap(spacing: 5, children: [for (final v in [0.25, 0.5, 1.0, 2.0, 4.0]) ChoiceChip(label: Text('${v}x'), selected: (item.speed - v).abs() < .001, onSelected: (_) { setState(() { item.speed = v; speed = v; }); final p = player; if (p != null && p.value.isInitialized) p.setPlaybackSpeed(v); }, visualDensity: VisualDensity.compact)])
+                    const Text('SPEED', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    if (item == null) const Text('Select a clip to adjust its speed.', style: TextStyle(fontSize: 11, color: Colors.black54)),
+                    if (item != null) ...[
+                      const SizedBox(height: 7),
+                      Row(children: [
+                        Expanded(child: ChoiceChip(label: const Text('Normal'), selected: item.speedMode == 'Normal', onSelected: (_) => setState(() { item.speedMode = 'Normal'; }), avatar: const Icon(Icons.speed, size: 16))),
+                        const SizedBox(width: 8),
+                        Expanded(child: ChoiceChip(label: const Text('Curve'), selected: item.speedMode == 'Curve', onSelected: (_) => setState(() { item.speedMode = 'Curve'; }), avatar: const Icon(Icons.show_chart, size: 16))),
+                      ]),
+                      if (item.speedMode == 'Normal') ...[
+                        Text('NORMAL SPEED  ${item.speed.toStringAsFixed(2)}x', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                        Slider(min: .1, max: 16, divisions: 159, value: item.speed.clamp(.1, 16).toDouble(), onChanged: (v) { setState(() { item.speed = v; speed = v; }); final p = player; if (p != null && p.value.isInitialized) p.setPlaybackSpeed(v); }),
+                        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('0.1x Slow', style: TextStyle(fontSize: 10, color: Colors.black54)), const Text('16x Fast', style: TextStyle(fontSize: 10, color: Colors.black54))]),
+                        Wrap(spacing: 5, children: [for (final v in [0.25, 0.5, 1.0, 2.0, 4.0]) ChoiceChip(label: Text('${v}x'), selected: (item.speed - v).abs() < .001, onSelected: (_) { setState(() { item.speed = v; speed = v; }); final p = player; if (p != null && p.value.isInitialized) p.setPlaybackSpeed(v); }, visualDensity: VisualDensity.compact)])
+                      ] else ...[
+                        const Text('SPEED CURVE PRESETS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 5),
+                        Wrap(spacing: 6, runSpacing: 2, children: ['Montage','Bullet','Jump Cut','Hero','Flash In'].map((name) => ChoiceChip(label: Text(name), selected: item.curvePreset == name, onSelected: (_) => setState(() => item.curvePreset = name), visualDensity: VisualDensity.compact)).toList()),
+                        Container(height: 48, width: double.infinity, margin: const EdgeInsets.only(top: 5), padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5), decoration: BoxDecoration(color: const Color(0xFFF0ECFA), borderRadius: BorderRadius.circular(7)), child: CustomPaint(painter: SpeedCurvePainter(item.curvePreset))),
+                        const Text('Curve changes playback speed across the selected video. Detailed curve-point editing and export rendering will be added in later milestones.', style: TextStyle(fontSize: 10, color: Colors.black54))
+                      ]
+                    ]
                   ]);
                 case 'Canvas':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('CANVAS RATIO', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), Wrap(spacing: 5, children: ['Original','9:16','16:9','1:1'].map((r) => ChoiceChip(label: Text(r), selected: cropRatio == r, onSelected: (_) => setState(() => cropRatio = r), visualDensity: VisualDensity.compact)).toList())]);
