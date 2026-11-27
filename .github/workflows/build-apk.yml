@@ -850,6 +850,24 @@ jobs:
               }
             }
 
+            String keyframeVolumeExpression(List<KeyframePoint> points, double timelineOffset) {
+              if (points.isEmpty) return '1';
+              final sorted = List<KeyframePoint>.of(points)..sort((a, b) => a.time.compareTo(b.time));
+              String expression = sorted.last.volume.clamp(0, 2).toStringAsFixed(4);
+              for (var i = sorted.length - 2; i >= 0; i--) {
+                final a = sorted[i], b = sorted[i + 1];
+                final start = (a.time - timelineOffset).toStringAsFixed(4);
+                final end = (b.time - timelineOffset).toStringAsFixed(4);
+                final first = a.volume.clamp(0, 2).toStringAsFixed(4);
+                final delta = (b.volume - a.volume).toStringAsFixed(4);
+                final span = (b.time - a.time).abs() < .0001 ? '0.0001' : (b.time - a.time).toStringAsFixed(4);
+                expression = 'if(lt(t\\,$end)\\,$first+($delta)*(t-$start)/$span\\,$expression)';
+              }
+              final firstTime = (sorted.first.time - timelineOffset).toStringAsFixed(4);
+              final firstValue = sorted.first.volume.clamp(0, 2).toStringAsFixed(4);
+              return 'if(lt(t\\,$firstTime)\\,$firstValue\\,$expression)';
+            }
+
             String escapeFfmpegText(String value) {
               return value
                   .replaceAll('\\', '\\\\')
@@ -915,7 +933,7 @@ jobs:
                       if (await extracted.exists() && await extracted.length() > 1024) {
                         temporaryAudioFiles.add(extracted);
                         args.addAll(['-i', audioPath]);
-                        audioInputs.add({'path': audioPath, 'start': timelineStart, 'duration': durations[i], 'volume': c.audioVolume, 'speed': clipSpeeds[i], 'voice': true});
+                        audioInputs.add({'path': audioPath, 'start': timelineStart, 'duration': durations[i], 'volume': c.audioVolume, 'speed': clipSpeeds[i], 'voice': true, 'keyframes': c.keyframes});
                       }
                     } catch (_) {
                       // A video without an audio stream is valid; continue without its original sound.
@@ -928,7 +946,7 @@ jobs:
                 for (final track in audioTracks) {
                   if (!track.muted && track.volume > 0 && track.start < projectDuration) {
                     args.addAll(['-stream_loop', '-1', '-i', track.path]);
-                    audioInputs.add({'path': track.path, 'start': track.start, 'duration': projectDuration - track.start, 'volume': track.volume, 'speed': 1.0, 'voice': false});
+                    audioInputs.add({'path': track.path, 'start': track.start, 'duration': projectDuration - track.start, 'volume': track.volume, 'speed': 1.0, 'voice': false, 'keyframes': track.keyframes});
                   }
                 }
 
@@ -1043,7 +1061,11 @@ jobs:
                         break;
                     }
                   }
-                  final audioFilterChain = <String>[...tempoFilters, ...audioEffects, 'volume=' + volume.toStringAsFixed(3)];
+                  final keyframes = input['keyframes'] as List<KeyframePoint>? ?? <KeyframePoint>[];
+                  final volumeExpression = keyframes.isEmpty
+                    ? volume.toStringAsFixed(3)
+                    : keyframeVolumeExpression(keyframes, input['start'] as double);
+                  final audioFilterChain = <String>[...tempoFilters, ...audioEffects, 'volume=' + volumeExpression + ':eval=frame'];
                   filters.add('[' + audioInputIndex.toString() + ':a]asetpts=PTS-STARTPTS,' +
                     audioFilterChain.join(',') +
                     ',adelay=' + startMs.toString() + '|' + startMs.toString() +
