@@ -882,14 +882,14 @@ jobs:
                 final first = a.volume.clamp(0, 2).toStringAsFixed(4);
                 final delta = (b.volume - a.volume).toStringAsFixed(4);
                 final span = (b.time - a.time).abs() < .0001 ? '0.0001' : (b.time - a.time).toStringAsFixed(4);
-                expression = 'if(lt(t\\,$end)\\,$first+($delta)*(t-$start)/$span\\,$expression)';
+                expression = 'if(lt(' + timeVariable + '\\,$end)\\,$first+(' + delta + ')*(' + timeVariable + '-$start)/$span\\,$expression)';
               }
               final firstTime = (sorted.first.time - timelineOffset).toStringAsFixed(4);
               final firstValue = sorted.first.volume.clamp(0, 2).toStringAsFixed(4);
-              return 'if(lt(t\\,$firstTime)\\,$firstValue\\,$expression)';
+              return 'if(lt(' + timeVariable + '\\,$firstTime)\\,$firstValue\\,$expression)';
             }
 
-            String keyframeExpression(List<KeyframePoint> points, String property, double timelineOffset, double fallback) {
+            String keyframeExpression(List<KeyframePoint> points, String property, double timelineOffset, double fallback, {String timeVariable = 't'}) {
               if (points.isEmpty) return fallback.toStringAsFixed(4);
               double value(KeyframePoint point) => switch (property) {
                 'scale' => point.scale,
@@ -1026,9 +1026,10 @@ jobs:
                   final xExpr = keyframeExpression(clipKeys, 'x', clipTimelineOffset, c.positionX);
                   final yExpr = keyframeExpression(clipKeys, 'y', clipTimelineOffset, c.positionY);
                   final opacityExpr = keyframeExpression(clipKeys, 'opacity', clipTimelineOffset, c.opacity);
-                  final clipAlpha = ',colorchannelmixer=aa=\'' + opacityExpr + '\':eval=frame';
+                  final clipAlpha = ",format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(" +
+                    keyframeExpression(clipKeys, 'opacity', clipTimelineOffset, c.opacity, timeVariable: 'T') + ")'";
                   final transform = clipKeys.isEmpty && (c.scale - 1).abs() < .001 && (c.positionX - .5).abs() < .001 && (c.positionY - .5).abs() < .001 ? '' :
-                    ',scale=w="ceil(' + width.toString() + '*max(0.1,' + scaleExpr + ')/2)*2":h="ceil(' + height.toString() + '*max(0.1,' + scaleExpr + ')/2)*2":eval=frame' +
+                    ',scale=w=\'ceil(' + width.toString() + '*max(0.1,' + scaleExpr + ')/2)*2\':h=\'ceil(' + height.toString() + '*max(0.1,' + scaleExpr + ')/2)*2\':eval=frame' +
                     ',pad=w="max(iw,' + width.toString() + ')":h="max(ih,' + height.toString() + '):x="(ow-iw)*' + xExpr + '":y="(oh-ih)*' + yExpr + '":eval=frame' +
                     ',crop=' + width.toString() + ':' + height.toString() + ':x="(iw-ow)*' + xExpr + '":y="(ih-oh)*' + yExpr;
                   String videoTail = ',scale=' + width.toString() + ':' + height.toString() +
@@ -1043,8 +1044,8 @@ jobs:
                     for (var k = 0; k < segments.length; k++) {
                       final segment = segments[k];
                       final label = 'curve_' + i.toString() + '_' + k.toString();
-                      final segmentAlpha = ',colorchannelmixer=aa=\'' +
-                        keyframeExpression(clipKeys, 'opacity', segmentTimelineOffset, c.opacity) + '\':eval=frame';
+                      final segmentAlpha = ",format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(" +
+                        keyframeExpression(clipKeys, 'opacity', segmentTimelineOffset, c.opacity, timeVariable: 'T') + ")'";
                       final segmentTransform = clipKeys.isEmpty && (c.scale - 1).abs() < .001 && (c.positionX - .5).abs() < .001 && (c.positionY - .5).abs() < .001 ? '' :
                         ',scale=w="ceil(' + width.toString() + '*max(0.1,' +
                         keyframeExpression(clipKeys, 'scale', segmentTimelineOffset, c.scale) +
@@ -1132,11 +1133,11 @@ jobs:
                   final keyFilter = chromaKeyEnabled
                     ? ',chromakey=0x00FF00:' + chromaSimilarity.clamp(0, 1).toStringAsFixed(3) + ':' + chromaBlend.clamp(0, .5).toStringAsFixed(3)
                     : '';
-                  final dynamicScale = overlayKeys.isEmpty ? overlayWidth.toString() : '"max(80,' + width.toString() + '*' + scaleExpr + ')"';
-                  final dynamicOpacity = overlayKeys.isEmpty ? o.opacity.clamp(0, 1).toStringAsFixed(3) : "'" + opacityExpr + "'";
+                  final dynamicScale = overlayKeys.isEmpty ? overlayWidth.toString() : "'max(80," + width.toString() + '*' + scaleExpr + ")'";
+                  final dynamicOpacity = keyframeExpression(overlayKeys, 'opacity', startTime, o.opacity, timeVariable: 'T');
                   filters.add('[' + inputIndex.toString() + ':v]setpts=PTS-STARTPTS,scale=w=' + dynamicScale +
                     ':h=-1:eval=frame,rotate=' + o.rotation.toStringAsFixed(4) + ':c=none:ow=rotw(iw):oh=roth(ih)' +
-                    keyFilter + ',format=rgba,colorchannelmixer=aa=' + dynamicOpacity + ':eval=frame[ov' + j.toString() + ']');
+                    keyFilter + ",format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(" + dynamicOpacity + ")[ov" + j.toString() + "]");
                   final x = width.toString() + '*' + centerXExpr + '-overlay_w/2';
                   final y = height.toString() + '*' + centerYExpr + '-overlay_h/2';
                   filters.add("[" + previous + "][ov" + j.toString() + "]overlay=x=" + x + ":y=" + y +
