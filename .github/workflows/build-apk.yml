@@ -323,6 +323,7 @@ jobs:
             late List<MediaClip> clips;
             final List<OverlayClip> overlays = [];
             final Map<String, VideoPlayerController> overlayPlayers = {};
+            final TransformationController previewTransform = TransformationController();
             VideoPlayerController? player;
             int selectedIndex = 0;
             int selectedOverlay = -1;
@@ -389,6 +390,7 @@ jobs:
             Future<void> selectClip(int index) async {
               if (index < 0 || index >= clips.length) return;
               stopSequence(refresh: false);
+              previewTransform.value = Matrix4.identity();
               final token = ++loadToken; final old = player; player = null;
               setState(() { selectedIndex = index; loading = true; selectedOverlay = -1; playhead = 0; });
               if (old != null) await old.dispose();
@@ -622,7 +624,37 @@ jobs:
               return LayoutBuilder(builder: (context, constraints) {
                 final size = Size(constraints.maxWidth, constraints.maxHeight);
                 return Stack(clipBehavior: Clip.hardEdge, alignment: Alignment.center, children: [
-                  Center(child: content),
+                  InteractiveViewer(
+                    transformationController: previewTransform,
+                    minScale: 1.0,
+                    maxScale: 5.0,
+                    panEnabled: true,
+                    scaleEnabled: true,
+                    constrained: true,
+                    boundaryMargin: const EdgeInsets.all(80),
+                    clipBehavior: Clip.hardEdge,
+                    child: SizedBox(
+                      width: size.width,
+                      height: size.height,
+                      child: Center(child: content),
+                    ),
+                  ),
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Material(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(20),
+                      child: IconButton(
+                        tooltip: 'Reset preview zoom',
+                        visualDensity: VisualDensity.compact,
+                        constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                        padding: const EdgeInsets.all(6),
+                        icon: const Icon(Icons.fit_screen, color: Colors.white, size: 18),
+                        onPressed: () => setState(() => previewTransform.value = Matrix4.identity()),
+                      ),
+                    ),
+                  ),
                   for (var i = 0; i < overlays.length; i++) if (projectTime >= overlays[i].start && projectTime <= overlays[i].start + overlays[i].duration) _overlayWidget(overlays[i], i, size),
                   if (overlayText.isNotEmpty) Positioned(bottom: 18, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), color: Colors.black54, child: Text(overlayText, style: const TextStyle(fontSize: 20, color: Colors.white, fontWeight: FontWeight.bold)))),
                 ]);
@@ -725,7 +757,7 @@ jobs:
 
             @override
             void dispose() {
-              sequenceTimer?.cancel(); player?.dispose(); for (final c in overlayPlayers.values) { c.dispose(); } textController.dispose(); super.dispose();
+              sequenceTimer?.cancel(); player?.dispose(); previewTransform.dispose(); for (final c in overlayPlayers.values) { c.dispose(); } textController.dispose(); super.dispose();
             }
 
             @override
