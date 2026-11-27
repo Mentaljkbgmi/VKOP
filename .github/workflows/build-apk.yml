@@ -893,12 +893,12 @@ Old chooseAudio removal            Future<void> addOverlay() async {
               else if (!o.isVideo) child = Image.file(File(o.path), fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image));
               else child = Container(color: Colors.black12, child: const Center(child: Icon(Icons.movie, color: Colors.white, size: 34)));
               return Positioned(left: size.width * o.centerX - width/2, top: size.height * o.centerY - width/2, width: width, child: GestureDetector(
-                onTap: () => setState(() => selectedOverlay = index),
-                onScaleStart: (d) { setState(() => selectedOverlay = index); beginOverlayGesture(d); },
+                onTap: () => setState(() { selectedOverlay = index; selectedAudio = -1; activeTool = 'Overlay'; }),
+                onScaleStart: (d) { setState(() { selectedOverlay = index; selectedAudio = -1; activeTool = 'Overlay'; }); beginOverlayGesture(d); },
                 onScaleUpdate: (d) { if (selectedOverlay == index) updateOverlayGesture(d, size); },
                 child: Transform.rotate(angle: o.rotation, child: Container(
                   decoration: active ? BoxDecoration(border: Border.all(color: purple, width: 2)) : null,
-                  child: child,
+                  child: Opacity(opacity: o.opacity.clamp(0, 1).toDouble(), child: child),
                 )),
               ));
             }
