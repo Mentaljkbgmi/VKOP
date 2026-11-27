@@ -849,6 +849,7 @@ Old chooseAudio removal            Future<void> addOverlay() async {
               if (exporting) return;
               if (clips.isEmpty) { toast('Add a main video or photo first.'); return; }
               setState(() => exporting = true);
+              final temporaryAudioFiles = <File>[];
               try {
                 await ensureClipDurations();
                 final size = exportResolution == '720p' ? 720 : exportResolution == '1080p' ? 1080 : exportResolution == '2K' ? 1440 : 2160;
@@ -856,44 +857,130 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                 final height = cropRatio == '9:16' ? size * 16 ~/ 9 : cropRatio == '1:1' ? size : size;
                 final args = <String>['-y'];
                 final durations = <double>[];
+                final clipSpeeds = <double>[];
                 for (final c in clips) {
-                  final sourceDuration = c.isVideo ? (c.trimEnd - c.trimStart).clamp(.1, 86400).toDouble() : c.duration.clamp(.1, 86400).toDouble();
-                  final d = sourceDuration / speed.clamp(.1, 16);
-                  durations.add(d);
-                  if (c.isVideo) { args.addAll(['-ss', c.trimStart.toStringAsFixed(3), '-i', c.path]); }
-                  else { args.addAll(['-loop', '1', '-t', sourceDuration.toStringAsFixed(3), '-i', c.path]); }
+                  final sourceDuration = c.isVideo
+                      ? (c.trimEnd - c.trimStart).clamp(.1, 86400).toDouble()
+                      : c.duration.clamp(.1, 86400).toDouble();
+                  final clipSpeed = c.speed.clamp(.1, 16).toDouble();
+                  clipSpeeds.add(clipSpeed);
+                  durations.add(sourceDuration / clipSpeed);
+                  if (c.isVideo) {
+                    args.addAll(['-ss', c.trimStart.toStringAsFixed(3), '-i', c.path]);
+                  } else {
+                    args.addAll(['-loop', '1', '-t', sourceDuration.toStringAsFixed(3), '-i', c.path]);
+                  }
                 }
                 for (final o in overlays) {
-                  if (o.isVideo) { args.addAll(['-stream_loop', '-1', '-i', o.path]); }
-                  else if ((o.path.toLowerCase().endsWith('.gif'))) { args.addAll(['-stream_loop', '-1', '-i', o.path]); }
-                  else { args.addAll(['-loop', '1', '-i', o.path]); }
+                  if (o.isVideo || o.path.toLowerCase().endsWith('.gif')) {
+                    args.addAll(['-stream_loop', '-1', '-i', o.path]);
+                  } else {
+                    args.addAll(['-loop', '1', '-i', o.path]);
+                  }
                 }
+
+                final projectDuration = durations.fold<double>(0, (a, b) => a + b);
+                final documents = await getApplicationDocumentsDirectory();
+                final audioInputs = <Map<String, Object>>[];
+
+                // Extract each main video's original audio separately so silent clips do not break the export graph.
+                var timelineStart = 0.0;
+                for (var i = 0; i < clips.length; i++) {
+                  final c = clips[i];
+                  if (c.isVideo && !c.audioMuted && c.audioVolume > 0) {
+                    final audioPath = documents.path + '/vkop_source_audio_' + DateTime.now().microsecondsSinceEpoch.toString() + '_' + i.toString() + '.m4a';
+                    try {
+                      await ffmpegChannel.invokeMethod<String>('execute', {'arguments': [
+                        '-y', '-ss', c.trimStart.toStringAsFixed(3), '-t',
+                        (durations[i] * clipSpeeds[i]).toStringAsFixed(3), '-i', c.path,
+                        '-vn', '-ac', '2', '-ar', '48000', '-c:a', 'aac', audioPath
+                      ]});
+                      final extracted = File(audioPath);
+                      if (await extracted.exists() && await extracted.length() > 1024) {
+                        temporaryAudioFiles.add(extracted);
+                        audioInputs.add({'path': audioPath, 'start': timelineStart, 'duration': durations[i], 'volume': c.audioVolume, 'speed': clipSpeeds[i]});
+                      }
+                    } catch (_) {
+                      // A video without an audio stream is valid; continue without its original sound.
+                    }
+                  }
+                  timelineStart += durations[i];
+                }
+
+                // Add user-selected music and sound-effect tracks after the extracted source audio inputs.
+                for (final track in audioTracks) {
+                  if (!track.muted && track.volume > 0 && track.start < projectDuration) {
+                    args.addAll(['-stream_loop', '-1', '-i', track.path]);
+                    audioInputs.add({'path': track.path, 'start': track.start, 'duration': projectDuration - track.start, 'volume': track.volume, 'speed': 1.0});
+                  }
+                }
+
                 final filters = <String>[];
                 for (var i = 0; i < clips.length; i++) {
-                  final d = durations[i];
-                  final sourceDuration = d * speed.clamp(.1, 16);
-                  filters.add('[$i:v]trim=duration=${sourceDuration.toStringAsFixed(3)},setpts=(PTS-STARTPTS)/${speed.clamp(.1, 16).toStringAsFixed(4)},scale=$width:$height:force_original_aspect_ratio=decrease,pad=$width:$height:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=$exportFps,format=yuv420p[v$i]');
+                  final sourceDuration = durations[i] * clipSpeeds[i];
+                  filters.add('[' + i.toString() + ':v]trim=duration=' + sourceDuration.toStringAsFixed(3) +
+                    ',setpts=(PTS-STARTPTS)/' + clipSpeeds[i].toStringAsFixed(4) +
+                    ',scale=' + width.toString() + ':' + height.toString() +
+                    ':force_original_aspect_ratio=decrease,pad=' + width.toString() + ':' + height.toString() +
+                    ':(ow-iw)/2:(oh-ih)/2,setsar=1,fps=' + exportFps.toString() + ',format=yuv420p[v' + i.toString() + ']');
                 }
-                final baseInputs = List.generate(clips.length, (i) => '[v$i]').join();
-                filters.add('${baseInputs}concat=n=${clips.length}:v=1:a=0[base0]');
+                final baseInputs = List.generate(clips.length, (i) => '[v' + i.toString() + ']').join();
+                filters.add(baseInputs + 'concat=n=' + clips.length.toString() + ':v=1:a=0[base0]');
                 var previous = 'base0';
                 for (var j = 0; j < overlays.length; j++) {
-                  final o = overlays[j]; final inputIndex = clips.length + j;
-                  final start = o.start.clamp(0, 86400).toDouble();
-                  final end = (start + o.duration).clamp(start + .05, 86400).toDouble();
+                  final o = overlays[j];
+                  final inputIndex = clips.length + j;
+                  final startTime = o.start.clamp(0, 86400).toDouble();
+                  final endTime = (startTime + o.duration).clamp(startTime + .05, projectDuration).toDouble();
                   final overlayWidth = (width * o.widthFactor).round().clamp(80, width).toInt();
-                  final next = 'base${j + 1}';
-                  filters.add('[$inputIndex:v]setpts=PTS-STARTPTS,scale=$overlayWidth:-1,rotate=${o.rotation.toStringAsFixed(4)}:c=none:ow=rotw(iw):oh=roth(ih),format=rgba[ov$j]');
-                  final x = '${width}*${o.centerX.toStringAsFixed(4)}-overlay_w/2';
-                  final y = '${height}*${o.centerY.toStringAsFixed(4)}-overlay_h/2';
-                  filters.add('[$previous][ov$j]overlay=x=$x:y=$y:enable=\'between(t,$start,$end)\':eof_action=pass[$next]');
+                  final next = 'base' + (j + 1).toString();
+                  filters.add('[' + inputIndex.toString() + ':v]setpts=PTS-STARTPTS,scale=' + overlayWidth.toString() +
+                    ':-1,rotate=' + o.rotation.toStringAsFixed(4) + ':c=none:ow=rotw(iw):oh=roth(ih),format=rgba[ov' + j.toString() + ']');
+                  final x = width.toString() + '*' + o.centerX.toStringAsFixed(4) + '-overlay_w/2';
+                  final y = height.toString() + '*' + o.centerY.toStringAsFixed(4) + '-overlay_h/2';
+                  filters.add('[' + previous + '][ov' + j.toString() + ']overlay=x=' + x + ':y=' + y +
+                    ':enable=\\'between(t,' + startTime.toStringAsFixed(3) + ',' + endTime.toStringAsFixed(3) +
+                    ')\\':eof_action=pass[' + next + ']');
                   previous = next;
                 }
+
+                // Build a synchronized audio mix from original clip audio and every enabled music track.
+                final audioLabels = <String>[];
+                var audioInputIndex = clips.length + overlays.length;
+                var audioTimelineStart = 0.0;
+                for (var i = 0; i < audioInputs.length; i++) {
+                  final input = audioInputs[i];
+                  final startMs = ((input['start'] as double) * 1000).round();
+                  final duration = input['duration'] as double;
+                  final volume = (input['volume'] as double).clamp(0, 2).toDouble();
+                  final audioSpeed = (input['speed'] as double).clamp(.1, 16).toDouble();
+                  final tempoFilters = <String>[];
+                  var factor = audioSpeed;
+                  while (factor < .5) { tempoFilters.add('atempo=0.5'); factor /= .5; }
+                  while (factor > 2) { tempoFilters.add('atempo=2'); factor /= 2; }
+                  tempoFilters.add('atempo=' + factor.toStringAsFixed(4));
+                  final label = 'aud' + i.toString();
+                  filters.add('[' + audioInputIndex.toString() + ':a]asetpts=PTS-STARTPTS,' +
+                    tempoFilters.join(',') + ',volume=' + volume.toStringAsFixed(3) +
+                    ',adelay=' + startMs.toString() + '|' + startMs.toString() +
+                    ',apad,atrim=duration=' + projectDuration.toStringAsFixed(3) + '[' + label + ']');
+                  audioLabels.add('[' + label + ']');
+                  audioInputIndex++;
+                }
+                if (audioLabels.isNotEmpty) {
+                  filters.add(audioLabels.join() + 'amix=inputs=' + audioLabels.length.toString() +
+                    ':duration=longest:dropout_transition=0,alimiter=limit=0.95[aout]');
+                }
+
                 final bitrate = size >= 2160 ? '35000000' : size >= 1440 ? '20000000' : size >= 1080 ? '10000000' : '5000000';
-                args.addAll(['-filter_complex', filters.join(';'), '-map', '[$previous]', '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-profile:v', 'main', '-tag:v', 'avc1', '-b:v', bitrate, '-r', '$exportFps', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-f', 'mp4']);
-                final dir = await getApplicationDocumentsDirectory();
-                final outputPath = '${dir.path}/VKOP_${DateTime.now().millisecondsSinceEpoch}.mp4';
-                args.addAll(['-t', durations.fold<double>(0, (a, b) => a + b).toStringAsFixed(3), outputPath]);
+                args.addAll(['-filter_complex', filters.join(';'), '-map', '[' + previous + ']']);
+                if (audioLabels.isNotEmpty) args.addAll(['-map', '[aout]', '-c:a', 'aac', '-b:a', '192k']);
+                else args.addAll(['-an']);
+                args.addAll(['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-profile:v', 'main',
+                  '-tag:v', 'avc1', '-b:v', bitrate, '-r', exportFps.toString(), '-pix_fmt', 'yuv420p',
+                  '-movflags', '+faststart', '-f', 'mp4']);
+                final outputPath = documents.path + '/VKOP_' + DateTime.now().millisecondsSinceEpoch.toString() + '.mp4';
+                args.addAll(['-t', projectDuration.toStringAsFixed(3), outputPath]);
                 await ffmpegChannel.invokeMethod<String>('execute', {'arguments': args});
                 final outputFile = File(outputPath);
                 if (!await outputFile.exists() || await outputFile.length() < 1024) {
@@ -903,11 +990,19 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                 await ffmpegChannel.invokeMethod<String>('saveToDownloads', {'sourcePath': outputPath, 'fileName': fileName});
                 if (!mounted) return;
                 setState(() => exporting = false);
-                toast('Export saved to Movies/VKOP/$fileName');
+                toast('Export saved to Movies/VKOP/' + fileName);
               } on PlatformException catch (e) {
-                if (!mounted) return; setState(() => exporting = false); toast('Export failed: ${e.message ?? 'FFmpeg error'}');
+                if (!mounted) return;
+                setState(() => exporting = false);
+                toast('Export failed: ' + (e.message ?? 'FFmpeg error'));
               } catch (e) {
-                if (!mounted) return; setState(() => exporting = false); toast('Export error: $e');
+                if (!mounted) return;
+                setState(() => exporting = false);
+                toast('Export error: ' + e.toString());
+              } finally {
+                for (final file in temporaryAudioFiles) {
+                  try { if (await file.exists()) await file.delete(); } catch (_) {}
+                }
               }
             }
 
@@ -1215,7 +1310,7 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                   ]);
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('CANVAS RATIO', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), Wrap(spacing: 5, children: ['Original','9:16','16:9','1:1'].map((r) => ChoiceChip(label: Text(r), selected: cropRatio == r, onSelected: (_) => setState(() => cropRatio = r), visualDensity: VisualDensity.compact)).toList())]);
                 case 'Export':
-                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('EXPORT SETTINGS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(height: 4), Row(children: [const Text('Resolution', style: TextStyle(fontSize: 11)), const SizedBox(width: 8), DropdownButton<String>(value: exportResolution, items: ['720p','1080p','2K','4K'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setState(() => exportResolution = v!)), const Spacer(), const Text('FPS', style: TextStyle(fontSize: 11)), const SizedBox(width: 5), DropdownButton<int>(value: exportFps, items: [24,30,60].map((v) => DropdownMenuItem(value: v, child: Text('$v'))).toList(), onChanged: (v) => setState(() => exportFps = v!))]), Wrap(spacing: 6, children: [ActionChip(avatar: const Icon(Icons.memory, size: 15), label: Text(testingFFmpeg ? 'Testing...' : 'Test FFmpeg'), onPressed: testingFFmpeg ? null : testFFmpeg), ActionChip(avatar: const Icon(Icons.movie_creation_outlined, size: 15), label: Text(exporting ? 'Exporting...' : 'Export MP4'), onPressed: exporting ? null : exportProject)]), const Text('Overlay layers are composited by FFmpeg. Export is silent in this milestone; audio mixing will follow. 4K60 may be slow or unsupported on some phones.', style: TextStyle(fontSize: 10, color: Colors.black54))]);
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('EXPORT SETTINGS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), const SizedBox(height: 4), Row(children: [const Text('Resolution', style: TextStyle(fontSize: 11)), const SizedBox(width: 8), DropdownButton<String>(value: exportResolution, items: ['720p','1080p','2K','4K'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setState(() => exportResolution = v!)), const Spacer(), const Text('FPS', style: TextStyle(fontSize: 11)), const SizedBox(width: 5), DropdownButton<int>(value: exportFps, items: [24,30,60].map((v) => DropdownMenuItem(value: v, child: Text('$v'))).toList(), onChanged: (v) => setState(() => exportFps = v!))]), Wrap(spacing: 6, children: [ActionChip(avatar: const Icon(Icons.memory, size: 15), label: Text(testingFFmpeg ? 'Testing...' : 'Test FFmpeg'), onPressed: testingFFmpeg ? null : testFFmpeg), ActionChip(avatar: const Icon(Icons.movie_creation_outlined, size: 15), label: Text(exporting ? 'Exporting...' : 'Export MP4'), onPressed: exporting ? null : exportProject)]), const Text('FFmpeg exports the main timeline, overlays, original clip audio and enabled music tracks. 4K60 may be slow or unsupported on some phones.', style: TextStyle(fontSize: 10, color: Colors.black54))]);
                 default: return const SizedBox.shrink();
               }
             }
