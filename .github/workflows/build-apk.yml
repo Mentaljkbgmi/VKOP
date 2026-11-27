@@ -1034,6 +1034,9 @@ jobs:
                   String videoTail = ',scale=' + width.toString() + ':' + height.toString() +
                     ':force_original_aspect_ratio=decrease,format=rgba,pad=' + width.toString() + ':' + height.toString() +
                     ':(ow-iw)/2:(oh-ih)/2:color=black@0,setsar=1,fps=' + exportFps.toString() + ',format=rgba';
+                  final rotationFilter = c.rotation.abs() > .001
+                    ? ',format=rgba,rotate=' + c.rotation.toStringAsFixed(4) + ':c=black@0:ow=rotw(iw):oh=roth(ih)'
+                    : '';
                   if (segments.isNotEmpty) {
                     final labels = <String>[];
                     var segmentTimelineOffset = clipTimelineOffset;
@@ -1056,7 +1059,7 @@ jobs:
                         '":y="(ih-oh)*' + keyframeExpression(clipKeys, 'y', segmentTimelineOffset, c.positionY) + '"';
                       filters.add('[' + i.toString() + ':v]trim=start=' + segment['offset']!.toStringAsFixed(4) +
                         ':duration=' + segment['source']!.toStringAsFixed(4) +
-                        ',setpts=(PTS-STARTPTS)/' + segment['speed']!.toStringAsFixed(4) +
+                        ',setpts=(PTS-STARTPTS)/' + segment['speed']!.toStringAsFixed(4) + rotationFilter +
                         videoTail + segmentTransform + segmentAlpha + '[' + label + ']');
                       labels.add('[' + label + ']');
                       segmentTimelineOffset += segment['output']!;
@@ -1065,7 +1068,7 @@ jobs:
                   } else {
                     final sourceDuration = durations[i] * clipSpeeds[i];
                     filters.add('[' + i.toString() + ':v]trim=duration=' + sourceDuration.toStringAsFixed(3) +
-                      ',setpts=(PTS-STARTPTS)/' + clipSpeeds[i].toStringAsFixed(4) +
+                      ',setpts=(PTS-STARTPTS)/' + clipSpeeds[i].toStringAsFixed(4) + rotationFilter +
                       videoTail + transform + clipAlpha + '[v' + i.toString() + ']');
                   }
                   clipTimelineOffset += durations[i];
@@ -1207,11 +1210,13 @@ jobs:
                 }
 
                 // Apply the selected alpha mask to the final composition.
-                if (maskShape == 'Circle' || maskShape == 'Oval') {
+                if (maskShape == 'Circle' || maskShape == 'Oval' || maskShape == 'Rounded' || stylePreset == 'Rounded') {
                   final masked = 'masked_output';
                   final alphaExpression = maskShape == 'Circle'
                     ? "if(lte((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2),(min(W,H)/2)*(min(W,H)/2)),alpha(X,Y),0)"
-                    : "if(lte(((X-W/2)/(W/2))*((X-W/2)/(W/2))+((Y-H/2)/(H/2))*((Y-H/2)/(H/2)),1),alpha(X,Y),0)";
+                    : maskShape == 'Oval'
+                      ? "if(lte(((X-W/2)/(W/2))*((X-W/2)/(W/2))+((Y-H/2)/(H/2))*((Y-H/2)/(H/2)),1),alpha(X,Y),0)"
+                      : "if(lte(pow(max(abs(X-W/2)-(W/2-min(W,H)*0.06),0),2)+pow(max(abs(Y-H/2)-(H/2-min(W,H)*0.06),0),2),pow(min(W,H)*0.06,2)),alpha(X,Y),0)";
                   filters.add("[" + previous + "]format=rgba,geq=a='" + alphaExpression + "'[" + masked + "]");
                   previous = masked;
                 }
@@ -1540,7 +1545,7 @@ jobs:
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const Text('CLIP ANIMATION', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                     Wrap(spacing: 5, children: ['None','Fade In','Fade Out','Zoom In','Zoom Out'].map((v) => ChoiceChip(label: Text(v), selected: animationPreset == v, onSelected: (_) => setState(() => animationPreset = v), visualDensity: VisualDensity.compact)).toList()),
-                    const Text('Animation preset applies to the preview. Timeline keyframes remain available for custom movement.', style: TextStyle(fontSize: 10, color: Colors.black54))
+                    const Text('Fade and zoom presets are rendered during export; keyframes support custom movement.', style: TextStyle(fontSize: 10, color: Colors.black54))
                   ]);
                 case 'Style':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
