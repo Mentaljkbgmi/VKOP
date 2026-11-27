@@ -1013,7 +1013,6 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                   if (overlayText.isNotEmpty) Positioned(left: 12, right: 12, bottom: 30, child: IgnorePointer(child: Text(overlayText, textAlign: TextAlign.center, style: TextStyle(color: selectedTextColor, fontSize: textSize, fontWeight: textBold ? FontWeight.bold : FontWeight.normal, shadows: const [Shadow(color: Colors.black87, blurRadius: 4, offset: Offset(1, 1))])))),
                   if (selectedSticker.isNotEmpty) Positioned(right: 18, top: 18, child: IgnorePointer(child: Text(selectedSticker, style: const TextStyle(fontSize: 42)))),
                   for (var i = 0; i < overlays.length; i++) if (projectTime >= overlays[i].start && projectTime <= overlays[i].start + overlays[i].duration) _overlayWidget(overlays[i], i, size),
-                  if (overlayText.isNotEmpty) Positioned(bottom: 18, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), color: Colors.black54, child: Text(overlayText, style: const TextStyle(fontSize: 20, color: Colors.white, fontWeight: FontWeight.bold)))),
                 ]);
               });
             }
