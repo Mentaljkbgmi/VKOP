@@ -1137,7 +1137,7 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const Text('STICKERS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                     const SizedBox(height: 8),
-                    Wrap(spacing: 8, runSpacing: 6, children: ['❤️','😂','🔥','⭐','👏','🎉','✨','😎','👍','💯','🌈','🎬'].map((emoji) => ChoiceChip(label: Text(emoji, style: const TextStyle(fontSize: 22)), selected: selectedSticker == emoji, onSelected: (_) => setState(() => selectedSticker = selectedSticker == emoji ? '' : emoji)).toList()),
+                    Wrap(spacing: 8, runSpacing: 6, children: ['❤️','😂','🔥','⭐','👏','🎉','✨','😎','👍','💯','🌈','🎬'].map((emoji) => ChoiceChip(label: Text(emoji, style: const TextStyle(fontSize: 22)), selected: selectedSticker == emoji, onSelected: (_) => setState(() => selectedSticker = selectedSticker == emoji ? '' : emoji))).toList()),
                     TextButton.icon(onPressed: () => setState(() => selectedSticker = ''), icon: const Icon(Icons.delete_outline), label: const Text('Remove sticker'))
                   ]);
                 case 'Filters':
