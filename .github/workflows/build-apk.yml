@@ -1040,6 +1040,8 @@ jobs:
                     for (var k = 0; k < segments.length; k++) {
                       final segment = segments[k];
                       final label = 'curve_' + i.toString() + '_' + k.toString();
+                      final segmentAlpha = ',colorchannelmixer=aa=\'' +
+                        keyframeExpression(clipKeys, 'opacity', segmentTimelineOffset, c.opacity) + '\':eval=frame';
                       final segmentTransform = clipKeys.isEmpty && (c.scale - 1).abs() < .001 && (c.positionX - .5).abs() < .001 && (c.positionY - .5).abs() < .001 ? '' :
                         ',scale=w="ceil(' + width.toString() + '*max(0.1,' +
                         keyframeExpression(clipKeys, 'scale', segmentTimelineOffset, c.scale) +
@@ -1055,7 +1057,7 @@ jobs:
                       filters.add('[' + i.toString() + ':v]trim=start=' + segment['offset']!.toStringAsFixed(4) +
                         ':duration=' + segment['source']!.toStringAsFixed(4) +
                         ',setpts=(PTS-STARTPTS)/' + segment['speed']!.toStringAsFixed(4) +
-                        videoTail + segmentTransform + clipAlpha + '[' + label + ']');
+                        videoTail + segmentTransform + segmentAlpha + '[' + label + ']');
                       labels.add('[' + label + ']');
                       segmentTimelineOffset += segment['output']!;
                     }
