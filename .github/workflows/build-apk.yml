@@ -1029,9 +1029,9 @@ jobs:
                   final clipAlpha = ",format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(" +
                     keyframeExpression(clipKeys, 'opacity', clipTimelineOffset, c.opacity, timeVariable: 'T') + ")'";
                   final transform = clipKeys.isEmpty && (c.scale - 1).abs() < .001 && (c.positionX - .5).abs() < .001 && (c.positionY - .5).abs() < .001 ? '' :
-                    ',scale=w=\'ceil(' + width.toString() + '*max(0.1,' + scaleExpr + ')/2)*2\':h=\'ceil(' + height.toString() + '*max(0.1,' + scaleExpr + ')/2)*2\':eval=frame' +
-                    ',pad=w="max(iw,' + width.toString() + ')":h="max(ih,' + height.toString() + '):x="(ow-iw)*' + xExpr + '":y="(oh-ih)*' + yExpr + '":eval=frame' +
-                    ',crop=' + width.toString() + ':' + height.toString() + ':x="(iw-ow)*' + xExpr + '":y="(ih-oh)*' + yExpr;
+                    ",scale=w='ceil(" + width.toString() + "*max(0.1," + scaleExpr + ")/2)*2':h='ceil(" + height.toString() + "*max(0.1," + scaleExpr + ")/2)*2':eval=frame" +
+                    ",pad=w='max(iw," + width.toString() + ")':h='max(ih," + height.toString() + ")':x='(ow-iw)*" + xExpr + "':y='(oh-ih)*" + yExpr + "':color=black@0:eval=frame" +
+                    ",crop=" + width.toString() + ":" + height.toString() + ":x='(iw-ow)*" + xExpr + "':y='(ih-oh)*" + yExpr + "'";
                   String videoTail = ',scale=' + width.toString() + ':' + height.toString() +
                     ':force_original_aspect_ratio=decrease,format=rgba,pad=' + width.toString() + ':' + height.toString() +
                     ':(ow-iw)/2:(oh-ih)/2:color=black@0,setsar=1,fps=' + exportFps.toString() + ',format=rgba';
@@ -1047,17 +1047,17 @@ jobs:
                       final segmentAlpha = ",format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(" +
                         keyframeExpression(clipKeys, 'opacity', segmentTimelineOffset, c.opacity, timeVariable: 'T') + ")'";
                       final segmentTransform = clipKeys.isEmpty && (c.scale - 1).abs() < .001 && (c.positionX - .5).abs() < .001 && (c.positionY - .5).abs() < .001 ? '' :
-                        ',scale=w="ceil(' + width.toString() + '*max(0.1,' +
+                        ",scale=w='ceil(" + width.toString() + "*max(0.1," +
                         keyframeExpression(clipKeys, 'scale', segmentTimelineOffset, c.scale) +
-                        ')/2)*2":h="ceil(' + height.toString() + '*max(0.1,' +
+                        ")/2)*2':h='ceil(" + height.toString() + "*max(0.1," +
                         keyframeExpression(clipKeys, 'scale', segmentTimelineOffset, c.scale) +
-                        ')/2)*2":eval=frame' +
-                        ',pad=w="max(iw,' + width.toString() + ')":h="max(ih,' + height.toString() +
-                        '):x="(ow-iw)*' + keyframeExpression(clipKeys, 'x', segmentTimelineOffset, c.positionX) +
-                        '":y="(oh-ih)*' + keyframeExpression(clipKeys, 'y', segmentTimelineOffset, c.positionY) +
-                        '":eval=frame,crop=' + width.toString() + ':' + height.toString() +
-                        ':x="(iw-ow)*' + keyframeExpression(clipKeys, 'x', segmentTimelineOffset, c.positionX) +
-                        '":y="(ih-oh)*' + keyframeExpression(clipKeys, 'y', segmentTimelineOffset, c.positionY) + '"';
+                        ")/2)*2':eval=frame" +
+                        ",pad=w='max(iw," + width.toString() + ")':h='max(ih," + height.toString() +
+                        ")':x='(ow-iw)*" + keyframeExpression(clipKeys, 'x', segmentTimelineOffset, c.positionX) +
+                        "':y='(oh-ih)*" + keyframeExpression(clipKeys, 'y', segmentTimelineOffset, c.positionY) +
+                        "':color=black@0:eval=frame,crop=" + width.toString() + ":" + height.toString() +
+                        ":x='(iw-ow)*" + keyframeExpression(clipKeys, 'x', segmentTimelineOffset, c.positionX) +
+                        "':y='(ih-oh)*" + keyframeExpression(clipKeys, 'y', segmentTimelineOffset, c.positionY) + "'";
                       filters.add('[' + i.toString() + ':v]trim=start=' + segment['offset']!.toStringAsFixed(4) +
                         ':duration=' + segment['source']!.toStringAsFixed(4) +
                         ',setpts=(PTS-STARTPTS)/' + segment['speed']!.toStringAsFixed(4) + rotationFilter +
