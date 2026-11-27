@@ -915,7 +915,7 @@ jobs:
                       if (await extracted.exists() && await extracted.length() > 1024) {
                         temporaryAudioFiles.add(extracted);
                         args.addAll(['-i', audioPath]);
-                        audioInputs.add({'path': audioPath, 'start': timelineStart, 'duration': durations[i], 'volume': c.audioVolume, 'speed': clipSpeeds[i]});
+                        audioInputs.add({'path': audioPath, 'start': timelineStart, 'duration': durations[i], 'volume': c.audioVolume, 'speed': clipSpeeds[i], 'voice': true});
                       }
                     } catch (_) {
                       // A video without an audio stream is valid; continue without its original sound.
@@ -928,7 +928,7 @@ jobs:
                 for (final track in audioTracks) {
                   if (!track.muted && track.volume > 0 && track.start < projectDuration) {
                     args.addAll(['-stream_loop', '-1', '-i', track.path]);
-                    audioInputs.add({'path': track.path, 'start': track.start, 'duration': projectDuration - track.start, 'volume': track.volume, 'speed': 1.0});
+                    audioInputs.add({'path': track.path, 'start': track.start, 'duration': projectDuration - track.start, 'volume': track.volume, 'speed': 1.0, 'voice': false});
                   }
                 }
 
@@ -1001,8 +1001,29 @@ jobs:
                   while (factor > 2) { tempoFilters.add('atempo=2'); factor /= 2; }
                   tempoFilters.add('atempo=' + factor.toStringAsFixed(4));
                   final label = 'aud' + i.toString();
+                  final audioEffects = <String>[];
+                  if ((input['voice'] as bool? ?? false) && noiseReductionEnabled) {
+                    audioEffects.add('afftdn=nf=-25');
+                  }
+                  if (input['voice'] as bool? ?? false) {
+                    switch (voiceEffect) {
+                      case 'Deep':
+                        audioEffects.addAll(['asetrate=40800', 'aresample=48000', 'atempo=1.1765']);
+                        break;
+                      case 'High':
+                        audioEffects.addAll(['asetrate=57600', 'aresample=48000', 'atempo=0.8333']);
+                        break;
+                      case 'Robot':
+                        audioEffects.addAll(['tremolo=f=30:d=0.75', 'aecho=0.8:0.88:40:0.35']);
+                        break;
+                      case 'Echo':
+                        audioEffects.add('aecho=0.8:0.9:80:0.4');
+                        break;
+                    }
+                  }
+                  final audioFilterChain = <String>[...tempoFilters, ...audioEffects, 'volume=' + volume.toStringAsFixed(3)];
                   filters.add('[' + audioInputIndex.toString() + ':a]asetpts=PTS-STARTPTS,' +
-                    tempoFilters.join(',') + ',volume=' + volume.toStringAsFixed(3) +
+                    audioFilterChain.join(',') +
                     ',adelay=' + startMs.toString() + '|' + startMs.toString() +
                     ',apad,atrim=duration=' + projectDuration.toStringAsFixed(3) + '[' + label + ']');
                   audioLabels.add('[' + label + ']');
