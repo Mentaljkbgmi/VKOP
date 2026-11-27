@@ -882,11 +882,11 @@ jobs:
                 final first = a.volume.clamp(0, 2).toStringAsFixed(4);
                 final delta = (b.volume - a.volume).toStringAsFixed(4);
                 final span = (b.time - a.time).abs() < .0001 ? '0.0001' : (b.time - a.time).toStringAsFixed(4);
-                expression = 'if(lt(' + timeVariable + '\\,$end)\\,$first+(' + delta + ')*(' + timeVariable + '-$start)/$span\\,$expression)';
+                expression = 'if(lt(t\\,$end)\\,$first+($delta)*(t-$start)/$span\\,$expression)';
               }
               final firstTime = (sorted.first.time - timelineOffset).toStringAsFixed(4);
               final firstValue = sorted.first.volume.clamp(0, 2).toStringAsFixed(4);
-              return 'if(lt(' + timeVariable + '\\,$firstTime)\\,$firstValue\\,$expression)';
+              return 'if(lt(t\\,$firstTime)\\,$firstValue\\,$expression)';
             }
 
             String keyframeExpression(List<KeyframePoint> points, String property, double timelineOffset, double fallback, {String timeVariable = 't'}) {
