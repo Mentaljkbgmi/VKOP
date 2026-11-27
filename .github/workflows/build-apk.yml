@@ -490,7 +490,8 @@ jobs:
                 final args = <String>['-y'];
                 final durations = <double>[];
                 for (final c in clips) {
-                  final d = c.isVideo ? (c.trimEnd - c.trimStart).clamp(.1, 86400).toDouble() : c.duration.clamp(.1, 86400).toDouble();
+                  final sourceDuration = c.isVideo ? (c.trimEnd - c.trimStart).clamp(.1, 86400).toDouble() : c.duration.clamp(.1, 86400).toDouble();
+                  final d = sourceDuration / speed.clamp(.1, 16);
                   durations.add(d);
                   if (c.isVideo) { args.addAll(['-ss', c.trimStart.toStringAsFixed(3), '-i', c.path]); }
                   else { args.addAll(['-loop', '1', '-t', d.toStringAsFixed(3), '-i', c.path]); }
@@ -503,7 +504,8 @@ jobs:
                 final filters = <String>[];
                 for (var i = 0; i < clips.length; i++) {
                   final d = durations[i];
-                  filters.add('[$i:v]trim=duration=${d.toStringAsFixed(3)},setpts=PTS-STARTPTS,scale=$width:$height:force_original_aspect_ratio=decrease,pad=$width:$height:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=$exportFps,format=yuv420p[v$i]');
+                  final sourceDuration = d * speed.clamp(.1, 16);
+                  filters.add('[$i:v]trim=duration=${sourceDuration.toStringAsFixed(3)},setpts=(PTS-STARTPTS)/${speed.clamp(.1, 16).toStringAsFixed(4)},scale=$width:$height:force_original_aspect_ratio=decrease,pad=$width:$height:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=$exportFps,format=yuv420p[v$i]');
                 }
                 final baseInputs = List.generate(clips.length, (i) => '[v$i]').join();
                 filters.add('${baseInputs}concat=n=${clips.length}:v=1:a=0[base0]');
@@ -521,17 +523,14 @@ jobs:
                   previous = next;
                 }
                 final bitrate = size >= 2160 ? '35000000' : size >= 1440 ? '20000000' : size >= 1080 ? '10000000' : '5000000';
-                args.addAll(['-filter_complex', filters.join(';'), '-map', '[$previous]', '-an', '-c:v', 'h264_mediacodec', '-b:v', bitrate, '-r', '$exportFps', '-pix_fmt', 'yuv420p', '-movflags', '+faststart']);
+                args.addAll(['-filter_complex', filters.join(';'), '-map', '[$previous]', '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-profile:v', 'main', '-tag:v', 'avc1', '-b:v', bitrate, '-r', '$exportFps', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-f', 'mp4']);
                 final dir = await getApplicationDocumentsDirectory();
                 final outputPath = '${dir.path}/VKOP_${DateTime.now().millisecondsSinceEpoch}.mp4';
                 args.addAll(['-t', durations.fold<double>(0, (a, b) => a + b).toStringAsFixed(3), outputPath]);
-                try {
-                  await ffmpegChannel.invokeMethod<String>('execute', {'arguments': args});
-                } on PlatformException {
-                  final fallbackArgs = List<String>.from(args);
-                  final codecIndex = fallbackArgs.indexOf('h264_mediacodec');
-                  if (codecIndex >= 0) fallbackArgs[codecIndex] = 'mpeg4';
-                  await ffmpegChannel.invokeMethod<String>('execute', {'arguments': fallbackArgs});
+                await ffmpegChannel.invokeMethod<String>('execute', {'arguments': args});
+                final outputFile = File(outputPath);
+                if (!await outputFile.exists() || await outputFile.length() < 1024) {
+                  throw Exception('FFmpeg did not create a valid MP4 file.');
                 }
                 final fileName = outputPath.split('/').last;
                 await ffmpegChannel.invokeMethod<String>('saveToDownloads', {'sourcePath': outputPath, 'fileName': fileName});
@@ -626,7 +625,7 @@ jobs:
                 case 'Overlay':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [const Expanded(child: Text('OVERLAY LAYERS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))), OutlinedButton.icon(onPressed: addOverlay, icon: const Icon(Icons.add, size: 16), label: const Text('Add layer'))]), if (overlay == null) const Text('Add a photo, video or GIF. Select its layer, then drag or pinch it on the preview.', style: TextStyle(fontSize: 10, color: Colors.black54)) else ...[Text(overlay.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)), Row(children: [const Text('Start', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: 120, value: overlay.start.clamp(0, 120).toDouble(), onChanged: (v) => setState(() => overlay.start = v))), Text('${overlay.start.toStringAsFixed(1)}s', style: const TextStyle(fontSize: 10))]), Row(children: [const Text('Duration', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: .5, max: 30, value: overlay.duration.clamp(.5, 30).toDouble(), onChanged: (v) => setState(() => overlay.duration = v))), Text('${overlay.duration.toStringAsFixed(1)}s', style: const TextStyle(fontSize: 10))]), Row(children: [const Text('Size', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: .12, max: .9, value: overlay.widthFactor.clamp(.12, .9).toDouble(), onChanged: (v) => setState(() => overlay.widthFactor = v))), IconButton(onPressed: deleteOverlay, icon: const Icon(Icons.delete_outline, color: Colors.red))])]]);
                 case 'Speed':
-                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('PLAYBACK SPEED ${speed.toStringAsFixed(1)}x', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), Slider(min: .5, max: 2, divisions: 15, value: speed, onChanged: (v) => setState(() => speed = v))]);
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('EXPORT SPEED ${speed.toStringAsFixed(1)}x', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), Slider(min: .1, max: 16, divisions: 159, value: speed.clamp(.1, 16).toDouble(), onChanged: (v) => setState(() => speed = v))]);
                 case 'Canvas':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('CANVAS RATIO', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), Wrap(spacing: 5, children: ['Original','9:16','16:9','1:1'].map((r) => ChoiceChip(label: Text(r), selected: cropRatio == r, onSelected: (_) => setState(() => cropRatio = r), visualDensity: VisualDensity.compact)).toList())]);
                 case 'Export':
