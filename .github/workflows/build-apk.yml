@@ -850,6 +850,17 @@ jobs:
               }
             }
 
+            String escapeFfmpegText(String value) {
+              return value
+                  .replaceAll('\\', '\\\\')
+                  .replaceAll(':', '\\:')
+                  .replaceAll("'", "\\'")
+                  .replaceAll('%', '\\%')
+                  .replaceAll(',', '\\,')
+                  .replaceAll('[', '\\[')
+                  .replaceAll(']', '\\]');
+            }
+
             Future<void> exportProject() async {
               if (exporting) return;
               if (clips.isEmpty) { toast('Add a main video or photo first.'); return; }
@@ -933,6 +944,25 @@ jobs:
                 final baseInputs = List.generate(clips.length, (i) => '[v' + i.toString() + ']').join();
                 filters.add(baseInputs + 'concat=n=' + clips.length.toString() + ':v=1:a=0[base0]');
                 var previous = 'base0';
+
+                // Apply the selected color filter and image adjustments to the complete main track.
+                final adjusted = 'adjusted_base';
+                final effectiveSaturation = filter == 'B&W' ? 0.0 : saturation.clamp(0, 3).toDouble();
+                filters.add('[' + previous + ']eq=brightness=' + brightness.clamp(-1, 1).toStringAsFixed(3) +
+                  ':contrast=' + contrast.clamp(0, 3).toStringAsFixed(3) +
+                  ':saturation=' + effectiveSaturation.toStringAsFixed(3) + '[' + adjusted + ']');
+                previous = adjusted;
+                if (filter == 'Warm') {
+                  filters.add('[' + previous + ']colorbalance=rs=0.08:gs=0.025:bs=-0.08[' + 'warm_base]');
+                  previous = 'warm_base';
+                }
+                if (motionBlurAmount > 0.01) {
+                  final blur = 'motion_blur_base';
+                  final frames = motionBlurAmount < .34 ? 2 : motionBlurAmount < .67 ? 3 : 4;
+                  filters.add('[' + previous + ']tmix=frames=' + frames.toString() + ':weights=' +
+                    List.filled(frames, '1').join(' ') + '[' + blur + ']');
+                  previous = blur;
+                }
                 for (var j = 0; j < overlays.length; j++) {
                   final o = overlays[j];
                   final inputIndex = clips.length + j;
@@ -941,8 +971,12 @@ jobs:
                   final endTime = (safeStart + o.duration).clamp(safeStart + .05, projectDuration > safeStart + .05 ? projectDuration : safeStart + .05).toDouble();
                   final overlayWidth = (width * o.widthFactor).round().clamp(80, width).toInt();
                   final next = 'base' + (j + 1).toString();
+                  final keyFilter = chromaKeyEnabled
+                    ? ',chromakey=0x00FF00:' + chromaSimilarity.clamp(0, 1).toStringAsFixed(3) + ':' + chromaBlend.clamp(0, .5).toStringAsFixed(3)
+                    : '';
                   filters.add('[' + inputIndex.toString() + ':v]setpts=PTS-STARTPTS,scale=' + overlayWidth.toString() +
-                    ':-1,rotate=' + o.rotation.toStringAsFixed(4) + ':c=none:ow=rotw(iw):oh=roth(ih),format=rgba[ov' + j.toString() + ']');
+                    ':-1,rotate=' + o.rotation.toStringAsFixed(4) + ':c=none:ow=rotw(iw):oh=roth(ih)' +
+                    keyFilter + ',format=rgba,colorchannelmixer=aa=' + o.opacity.clamp(0, 1).toStringAsFixed(3) + '[ov' + j.toString() + ']');
                   final x = width.toString() + '*' + o.centerX.toStringAsFixed(4) + '-overlay_w/2';
                   final y = height.toString() + '*' + o.centerY.toStringAsFixed(4) + '-overlay_h/2';
                   filters.add("[" + previous + "][ov" + j.toString() + "]overlay=x=" + x + ":y=" + y +
@@ -977,6 +1011,29 @@ jobs:
                 if (audioLabels.isNotEmpty) {
                   filters.add(audioLabels.join() + 'amix=inputs=' + audioLabels.length.toString() +
                     ':duration=longest:dropout_transition=0,alimiter=limit=0.95[aout]');
+                }
+
+                // Render editable text and sticker layers into the final video.
+                if (overlayText.trim().isNotEmpty) {
+                  final safeText = escapeFfmpegText(overlayText.trim());
+                  final textColor = switch (textColorName) {
+                    'Black' => 'black', 'Yellow' => 'yellow', 'Purple' => '0xFFB99AFF',
+                    'Red' => 'red', _ => 'white'
+                  };
+                  final textOutput = 'text_rendered';
+                  final fontSize = (textSize * width / 360).round().clamp(18, 220);
+                  filters.add('[' + previous + ']drawtext=fontfile=/system/fonts/Roboto-Regular.ttf:text=' +
+                    "'" + safeText + "'" + ':fontcolor=' + textColor + ':fontsize=' + fontSize.toString() +
+                    ':x=(w-text_w)/2:y=h*0.82:shadowcolor=black@0.8:shadowx=2:shadowy=2[' + textOutput + ']');
+                  previous = textOutput;
+                }
+                if (selectedSticker.isNotEmpty) {
+                  final safeSticker = escapeFfmpegText(selectedSticker);
+                  final stickerOutput = 'sticker_rendered';
+                  filters.add('[' + previous + ']drawtext=fontfile=/system/fonts/NotoColorEmoji.ttf:text=' +
+                    "'" + safeSticker + "'" + ':fontcolor=white:fontsize=' + (width * .16).round().clamp(36, 260).toString() +
+                    ':x=w-text_w-24:y=24:shadowcolor=black@0.7:shadowx=2:shadowy=2[' + stickerOutput + ']');
+                  previous = stickerOutput;
                 }
 
                 final bitrate = size >= 2160 ? '35000000' : size >= 1440 ? '20000000' : size >= 1080 ? '10000000' : '5000000';
