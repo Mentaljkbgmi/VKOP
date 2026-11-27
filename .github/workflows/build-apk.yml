@@ -963,6 +963,17 @@ jobs:
                     "'" + List.filled(frames, '1').join(' ') + "'" + '[' + blur + ']');
                   previous = blur;
                 }
+                // Render clip entrance and exit animation on the complete composed timeline.
+                if (animationPreset == 'Fade In' || animationPreset == 'Fade Out') {
+                  final fadeLabel = 'animated_base';
+                  final fadeDuration = projectDuration.clamp(.1, 1.0).toDouble();
+                  final fadeFilter = animationPreset == 'Fade In'
+                    ? 'fade=t=in:st=0:d=' + fadeDuration.toStringAsFixed(3) + ':alpha=0'
+                    : 'fade=t=out:st=' + (projectDuration - fadeDuration).clamp(0, projectDuration).toStringAsFixed(3) +
+                      ':d=' + fadeDuration.toStringAsFixed(3) + ':alpha=0';
+                  filters.add('[' + previous + ']' + fadeFilter + '[' + fadeLabel + ']');
+                  previous = fadeLabel;
+                }
                 for (var j = 0; j < overlays.length; j++) {
                   final o = overlays[j];
                   final inputIndex = clips.length + j;
@@ -1032,6 +1043,16 @@ jobs:
                 if (audioLabels.isNotEmpty) {
                   filters.add(audioLabels.join() + 'amix=inputs=' + audioLabels.length.toString() +
                     ':duration=longest:dropout_transition=0,alimiter=limit=0.95[aout]');
+                }
+
+                // Apply the selected alpha mask to the final composition.
+                if (maskShape == 'Circle' || maskShape == 'Oval') {
+                  final masked = 'masked_output';
+                  final alphaExpression = maskShape == 'Circle'
+                    ? "if(lte((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2),(min(W,H)/2)*(min(W,H)/2)),alpha(X,Y),0)"
+                    : "if(lte(((X-W/2)/(W/2))*((X-W/2)/(W/2))+((Y-H/2)/(H/2))*((Y-H/2)/(H/2)),1),alpha(X,Y),0)";
+                  filters.add("[" + previous + "]format=rgba,geq=a='" + alphaExpression + "'[" + masked + "]");
+                  previous = masked;
                 }
 
                 // Render editable text and sticker layers into the final video.
