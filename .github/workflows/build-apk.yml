@@ -898,6 +898,7 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                       final extracted = File(audioPath);
                       if (await extracted.exists() && await extracted.length() > 1024) {
                         temporaryAudioFiles.add(extracted);
+                        args.addAll(['-i', audioPath]);
                         audioInputs.add({'path': audioPath, 'start': timelineStart, 'duration': durations[i], 'volume': c.audioVolume, 'speed': clipSpeeds[i]});
                       }
                     } catch (_) {
@@ -931,7 +932,8 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                   final o = overlays[j];
                   final inputIndex = clips.length + j;
                   final startTime = o.start.clamp(0, 86400).toDouble();
-                  final endTime = (startTime + o.duration).clamp(startTime + .05, projectDuration).toDouble();
+                  final safeStart = startTime.clamp(0, projectDuration > .05 ? projectDuration - .05 : 0).toDouble();
+                  final endTime = (safeStart + o.duration).clamp(safeStart + .05, projectDuration > safeStart + .05 ? projectDuration : safeStart + .05).toDouble();
                   final overlayWidth = (width * o.widthFactor).round().clamp(80, width).toInt();
                   final next = 'base' + (j + 1).toString();
                   filters.add('[' + inputIndex.toString() + ':v]setpts=PTS-STARTPTS,scale=' + overlayWidth.toString() +
@@ -939,7 +941,7 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                   final x = width.toString() + '*' + o.centerX.toStringAsFixed(4) + '-overlay_w/2';
                   final y = height.toString() + '*' + o.centerY.toStringAsFixed(4) + '-overlay_h/2';
                   filters.add('[' + previous + '][ov' + j.toString() + ']overlay=x=' + x + ':y=' + y +
-                    ':enable=\\'between(t,' + startTime.toStringAsFixed(3) + ',' + endTime.toStringAsFixed(3) +
+                    ':enable=\\'between(t,' + safeStart.toStringAsFixed(3) + ',' + endTime.toStringAsFixed(3) +
                     ')\\':eof_action=pass[' + next + ']');
                   previous = next;
                 }
