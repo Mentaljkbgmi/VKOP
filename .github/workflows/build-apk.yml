@@ -35,6 +35,7 @@ jobs:
         run: |
           flutter pub add file_picker
           flutter pub add video_player
+          flutter pub add just_audio
           flutter pub add path_provider
 
       - name: Add FFmpeg Android dependency
@@ -177,6 +178,7 @@ jobs:
           import 'package:flutter/services.dart';
           import 'package:file_picker/file_picker.dart';
           import 'package:video_player/video_player.dart';
+          import 'package:just_audio/just_audio.dart';
           import 'package:path_provider/path_provider.dart';
 
           void main() => runApp(const VKOPApp());
@@ -196,8 +198,36 @@ jobs:
             String curvePreset = 'Montage';
             double trimStart = 0;
             double trimEnd = 0;
+            double scale = 1;
+            double positionX = .5;
+            double positionY = .5;
+            double opacity = 1;
+            final List<KeyframePoint> keyframes = [];
 
             MediaClip({required this.path, required this.name, required this.isVideo, this.duration = 3});
+          }
+
+          class KeyframePoint {
+            double time;
+            double scale;
+            double x;
+            double y;
+            double opacity;
+            double volume;
+            KeyframePoint({required this.time, this.scale = 1, this.x = .5, this.y = .5, this.opacity = 1, this.volume = 1});
+          }
+
+          class AudioClip {
+            final String path;
+            final String name;
+            final Object id = Object();
+            double duration = 0;
+            double start = 0;
+            double volume = 1;
+            bool muted = false;
+            final List<KeyframePoint> keyframes = [];
+            AudioClip({required this.path, required this.name});
+          }
           }
 
           class SpeedCurvePainter extends CustomPainter {
@@ -245,6 +275,8 @@ jobs:
             double centerY = .5;
             double widthFactor = .34;
             double rotation = 0;
+            double opacity = 1;
+            final List<KeyframePoint> keyframes = [];
 
             OverlayClip({required this.path, required this.name, required this.isVideo});
           }
@@ -353,11 +385,14 @@ jobs:
           class _VKOPEditorState extends State<VKOPEditor> {
             late List<MediaClip> clips;
             final List<OverlayClip> overlays = [];
+            final List<AudioClip> audioTracks = [];
+            final Map<Object, AudioPlayer> audioPlayers = {};
             final Map<String, VideoPlayerController> overlayPlayers = {};
             final TransformationController previewTransform = TransformationController();
             VideoPlayerController? player;
             int selectedIndex = 0;
             int selectedOverlay = -1;
+            int selectedAudio = -1;
             int loadToken = 0;
             int sequenceToken = 0;
             bool loading = false;
@@ -385,6 +420,7 @@ jobs:
             MediaClip? get current => clips.isEmpty || selectedIndex < 0 || selectedIndex >= clips.length ? null : clips[selectedIndex];
             double get projectTime => clips.take(selectedIndex < 0 ? 0 : selectedIndex).fold<double>(0, (sum, c) => sum + (c.isVideo ? (c.trimEnd > c.trimStart ? c.trimEnd - c.trimStart : c.duration) : c.duration)) + playhead;
             OverlayClip? get currentOverlay => selectedOverlay < 0 || selectedOverlay >= overlays.length ? null : overlays[selectedOverlay];
+            AudioClip? get currentAudio => selectedAudio < 0 || selectedAudio >= audioTracks.length ? null : audioTracks[selectedAudio];
 
             @override
             void initState() {
@@ -417,6 +453,7 @@ jobs:
 
             void stopSequence({bool refresh = true}) {
               playingSequence = false; sequenceToken++; sequenceTimer?.cancel(); sequenceTimer = null; player?.pause();
+              for (final audio in audioPlayers.values) { audio.pause(); }
               if (refresh && mounted) setState(() {});
             }
 
@@ -445,11 +482,70 @@ jobs:
               } catch (e) { if (mounted && token == loadToken) { setState(() => loading = false); toast('Video preview not supported: $e'); } }
             }
 
-            Future<void> playAll() async { if (clips.isEmpty) return; playingSequence = true; await playAt(selectedIndex.clamp(0, clips.length - 1).toInt()); }
+            Future<void> playAll() async {
+              if (clips.isEmpty) return;
+              playingSequence = true;
+              await startAudioMix();
+              await playAt(selectedIndex.clamp(0, clips.length - 1).toInt());
+            }
+
+            Future<void> startAudioMix() async {
+              for (final track in audioTracks) {
+                final audio = audioPlayers[track.id];
+                if (audio == null) continue;
+                try {
+                  final offset = projectTime - track.start;
+                  if (offset < 0 || track.duration <= 0) { await audio.pause(); continue; }
+                  final position = offset % track.duration;
+                  await audio.setVolume(track.muted ? 0 : track.volume.clamp(0, 1).toDouble());
+                  await audio.seek(Duration(milliseconds: (position * 1000).round()));
+                  await audio.play();
+                } catch (_) {}
+              }
+            }
+
+            void addKeyframe() {
+              final audio = currentAudio;
+              if (audio != null) {
+                audio.keyframes.add(KeyframePoint(time: projectTime, volume: audio.volume));
+                setState(() {}); toast('Audio keyframe added at ${time(projectTime)}.'); return;
+              }
+              final overlay = currentOverlay;
+              if (overlay != null) {
+                overlay.keyframes.add(KeyframePoint(time: projectTime, scale: overlay.widthFactor, x: overlay.centerX, y: overlay.centerY, opacity: overlay.opacity));
+                setState(() {}); toast('Overlay keyframe added at ${time(projectTime)}.'); return;
+              }
+              final item = current;
+              if (item == null) { toast('Select a video, photo, overlay or audio clip first.'); return; }
+              item.keyframes.add(KeyframePoint(time: projectTime, scale: item.scale, x: item.positionX, y: item.positionY, opacity: item.opacity));
+              setState(() {}); toast('Clip keyframe added at ${time(projectTime)}.');
+            }
+
+            Future<void> chooseAudio() async {
+              try {
+                final files = await FilePicker.pickFiles(type: FileType.audio, allowMultiple: true);
+                if (files.isEmpty) return;
+                final added = <AudioClip>[];
+                for (final file in files) {
+                  if (file.path == null) continue;
+                  final track = AudioClip(path: file.path!, name: file.name);
+                  final audio = AudioPlayer();
+                  final duration = await audio.setFilePath(track.path);
+                  track.duration = (duration?.inMilliseconds ?? 0) / 1000;
+                  await audio.setLoopMode(LoopMode.one);
+                  await audio.pause();
+                  audioPlayers[track.id] = audio;
+                  added.add(track);
+                }
+                if (!mounted || added.isEmpty) return;
+                setState(() { audioTracks.addAll(added); selectedAudio = audioTracks.length - 1; selectedOverlay = -1; activeTool = 'Audio'; });
+                toast('${added.length} audio track(s) added. Adjust volume below and press Play to preview the mix.');
+              } catch (e) { toast('Could not add audio: $e'); }
+            }
             Future<void> playAt(int index) async {
               if (!playingSequence || !mounted) return;
               sequenceTimer?.cancel(); final token = ++sequenceToken;
-              if (index >= clips.length) { playingSequence = false; if (mounted) setState(() {}); return; }
+              if (index >= clips.length) { playingSequence = false; for (final a in audioPlayers.values) { a.pause(); } if (mounted) setState(() {}); return; }
               final old = player; player = null; if (old != null) await old.dispose();
               if (!mounted || token != sequenceToken || !playingSequence) return;
               final item = clips[index]; setState(() { selectedIndex = index; loading = item.isVideo; playhead = 0; });
@@ -549,12 +645,7 @@ jobs:
               }
             }
 
-            Future<void> chooseAudio() async {
-              try { final files = await FilePicker.pickFiles(type: FileType.audio); if (files.isEmpty) return; setState(() => audioName = files.first.name); toast('Audio selected. Audio mixing will be added in a later milestone.'); }
-              catch (e) { toast('Could not select audio: $e'); }
-            }
-
-            Future<void> addOverlay() async {
+Old chooseAudio removal            Future<void> addOverlay() async {
               try {
                 final r = await FilePicker.pickFiles(type: FileType.media);
                 if (r.isEmpty) return;
@@ -689,11 +780,12 @@ jobs:
 
             Widget preview() {
               final item = current; Widget content;
+              final originalAspect = player?.value.isInitialized == true ? player!.value.aspectRatio : 16 / 9;
               if (loading) content = const CircularProgressIndicator();
               else if (item == null) content = const Text('No clip selected');
               else if (!item.isVideo) content = Image.file(File(item.path), fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image));
               else if (player == null || !player!.value.isInitialized) content = const Text('Video preview unavailable');
-              else content = AspectRatio(aspectRatio: aspect, child: VideoPlayer(player!));
+              else content = AspectRatio(aspectRatio: originalAspect, child: VideoPlayer(player!));
               if (filter == 'B&W') content = ColorFiltered(colorFilter: const ColorFilter.matrix([.2126,.7152,.0722,0,0,.2126,.7152,.0722,0,0,.2126,.7152,.0722,0,0,0,0,0,1,0]), child: content);
               if (filter == 'Warm') content = ColorFiltered(colorFilter: const ColorFilter.matrix([1.1,0,0,0,10,0,1,0,0,0,0,0,.9,0,0,0,0,0,1,0]), child: content);
               return LayoutBuilder(builder: (context, constraints) {
@@ -711,11 +803,11 @@ jobs:
                     child: SizedBox(
                       width: size.width,
                       height: size.height,
-                      child: Center(child: content),
+                      child: Center(child: AspectRatio(aspectRatio: aspect, child: ColoredBox(color: Colors.black, child: Center(child: content)))),
                     ),
                   ),
                   Positioned(
-                    top: 8,
+                    bottom: 8,
                     left: 8,
                     child: Material(
                       color: Colors.black54,
@@ -804,22 +896,28 @@ jobs:
               final item = current; final overlay = currentOverlay;
               switch (activeTool) {
                 case 'Edit':
-                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('EDIT CLIP', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), if (item != null && item.isVideo && item.duration > 0) RangeSlider(min: 0, max: item.duration, values: RangeValues(item.trimStart.clamp(0, item.duration).toDouble(), item.trimEnd.clamp(0, item.duration).toDouble()), onChanged: (v) { if (v.end-v.start > .1) setState(() { item.trimStart = v.start; item.trimEnd = v.end; }); }), if (item != null && item.isVideo) Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('IN ${time(item.trimStart)}', style: const TextStyle(fontSize: 10)), Text('OUT ${time(item.trimEnd)}', style: const TextStyle(fontSize: 10))]), Wrap(spacing: 5, children: [chip('Split', Icons.content_cut, splitSelected), chip('Delete', Icons.delete_outline, removeSelected), chip('Canvas', Icons.crop, () => setState(() => activeTool = 'Canvas'))])]);
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('EDIT CLIP', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), if (item != null) Row(children: [Text('Keyframes: ${item.keyframes.length}', style: const TextStyle(fontSize: 10)), const Spacer(), TextButton.icon(onPressed: addKeyframe, icon: const Icon(Icons.key, size: 16), label: const Text('Add keyframe'))]), if (item != null && item.isVideo && item.duration > 0) RangeSlider(min: 0, max: item.duration, values: RangeValues(item.trimStart.clamp(0, item.duration).toDouble(), item.trimEnd.clamp(0, item.duration).toDouble()), onChanged: (v) { if (v.end-v.start > .1) setState(() { item.trimStart = v.start; item.trimEnd = v.end; }); }), if (item != null && item.isVideo) Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('IN ${time(item.trimStart)}', style: const TextStyle(fontSize: 10)), Text('OUT ${time(item.trimEnd)}', style: const TextStyle(fontSize: 10))]), Wrap(spacing: 5, children: [chip('Split', Icons.content_cut, splitSelected), chip('Delete', Icons.delete_outline, removeSelected), chip('Canvas', Icons.crop, () => setState(() => activeTool = 'Canvas'))])]);
                 case 'Audio':
+                  final audio = currentAudio;
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    const Text('AUDIO TOOLS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                    Wrap(spacing: 8, runSpacing: 5, children: [
-                      OutlinedButton.icon(onPressed: chooseAudio, icon: const Icon(Icons.library_music), label: Text(audioName.isEmpty ? 'Add music / audio' : audioName)),
-                      OutlinedButton.icon(onPressed: extractingAudio || current?.isVideo != true ? null : extractAudio, icon: extractingAudio ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.audio_file), label: Text(extractingAudio ? 'Extracting...' : 'Extract audio')),
-                    ]),
-                    const Text('Extracted audio is saved as M4A in Music/VKOP.', style: TextStyle(fontSize: 10, color: Colors.black54))
+                    Row(children: [const Expanded(child: Text('AUDIO MIXER', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))), OutlinedButton.icon(onPressed: chooseAudio, icon: const Icon(Icons.library_music, size: 16), label: const Text('Add music'))]),
+                    if (audioTracks.isEmpty) const Text('Add one or more music/audio files. Each track plays together with the video.', style: TextStyle(fontSize: 10, color: Colors.black54)),
+                    if (audio != null) ...[
+                      Text(audio.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                      Row(children: [const Text('Volume', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: 1, divisions: 100, value: audio.volume.clamp(0, 1).toDouble(), onChanged: (v) { setState(() => audio.volume = v); audioPlayers[audio.id]?.setVolume(audio.muted ? 0 : v); })), Text('${(audio.volume * 100).round()}%', style: const TextStyle(fontSize: 10)), IconButton(visualDensity: VisualDensity.compact, onPressed: () { setState(() => audio.muted = !audio.muted); audioPlayers[audio.id]?.setVolume(audio.muted ? 0 : audio.volume); }, icon: Icon(audio.muted ? Icons.volume_off : Icons.volume_up, size: 18))]),
+                      Row(children: [Text('Duration ${time(audio.duration)}', style: const TextStyle(fontSize: 10)), const Spacer(), TextButton.icon(onPressed: addKeyframe, icon: const Icon(Icons.key, size: 16), label: Text('Keyframe (${audio.keyframes.length})')), IconButton(onPressed: () async { final p = audioPlayers.remove(audio.id); await p?.dispose(); setState(() { audioTracks.removeAt(selectedAudio); selectedAudio = audioTracks.isEmpty ? -1 : (selectedAudio >= audioTracks.length ? audioTracks.length - 1 : selectedAudio); }); }, icon: const Icon(Icons.delete_outline, color: Colors.red, size: 18))]),
+                    ],
+                    Wrap(spacing: 6, children: audioTracks.asMap().entries.map((entry) => ChoiceChip(label: Text(entry.value.name, overflow: TextOverflow.ellipsis), selected: selectedAudio == entry.key, onSelected: (_) => setState(() { selectedAudio = entry.key; selectedOverlay = -1; }))).toList()),
+                    const Divider(height: 8),
+                    OutlinedButton.icon(onPressed: extractingAudio || current?.isVideo != true ? null : extractAudio, icon: extractingAudio ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.audio_file), label: Text(extractingAudio ? 'Extracting...' : 'Extract audio from selected video')),
+                    const Text('Audio preview mixing works during playback. Final video export audio rendering is a separate export milestone.', style: TextStyle(fontSize: 10, color: Colors.black54))
                   ]);
                 case 'Text':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('TEXT OVERLAY', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), TextField(controller: textController, decoration: const InputDecoration(hintText: 'Type text for preview', isDense: true), onSubmitted: (v) => setState(() => overlayText = v)), Wrap(children: [TextButton(onPressed: () => setState(() => overlayText = textController.text), child: const Text('Add text')), TextButton(onPressed: () => setState(() => overlayText = ''), child: const Text('Remove text'))])]);
                 case 'Effects':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('FILTERS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), Wrap(spacing: 5, children: ['None','B&W','Warm'].map((f) => ChoiceChip(label: Text(f), selected: filter == f, onSelected: (_) => setState(() => filter = f), visualDensity: VisualDensity.compact)).toList())]);
                 case 'Overlay':
-                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [const Expanded(child: Text('OVERLAY LAYERS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))), OutlinedButton.icon(onPressed: addOverlay, icon: const Icon(Icons.add, size: 16), label: const Text('Add layer'))]), if (overlay == null) const Text('Add a photo, video or GIF. Select its layer, then drag or pinch it on the preview.', style: TextStyle(fontSize: 10, color: Colors.black54)) else ...[Text(overlay.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)), Row(children: [const Text('Start', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: 120, value: overlay.start.clamp(0, 120).toDouble(), onChanged: (v) => setState(() => overlay.start = v))), Text('${overlay.start.toStringAsFixed(1)}s', style: const TextStyle(fontSize: 10))]), Row(children: [const Text('Duration', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: .5, max: 30, value: overlay.duration.clamp(.5, 30).toDouble(), onChanged: (v) => setState(() => overlay.duration = v))), Text('${overlay.duration.toStringAsFixed(1)}s', style: const TextStyle(fontSize: 10))]), Row(children: [const Text('Size', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: .12, max: .9, value: overlay.widthFactor.clamp(.12, .9).toDouble(), onChanged: (v) => setState(() => overlay.widthFactor = v))), IconButton(onPressed: deleteOverlay, icon: const Icon(Icons.delete_outline, color: Colors.red))])]]);
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [const Expanded(child: Text('OVERLAY LAYERS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))), OutlinedButton.icon(onPressed: addOverlay, icon: const Icon(Icons.add, size: 16), label: const Text('Add layer'))]), if (overlay != null) Row(children: [Text('Keyframes: ${overlay.keyframes.length}', style: const TextStyle(fontSize: 10)), const Spacer(), TextButton.icon(onPressed: addKeyframe, icon: const Icon(Icons.key, size: 16), label: const Text('Add keyframe'))]), if (overlay == null) const Text('Add a photo, video or GIF. Select its layer, then drag or pinch it on the preview.', style: TextStyle(fontSize: 10, color: Colors.black54)) else ...[Text(overlay.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)), Row(children: [const Text('Start', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: 120, value: overlay.start.clamp(0, 120).toDouble(), onChanged: (v) => setState(() => overlay.start = v))), Text('${overlay.start.toStringAsFixed(1)}s', style: const TextStyle(fontSize: 10))]), Row(children: [const Text('Duration', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: .5, max: 30, value: overlay.duration.clamp(.5, 30).toDouble(), onChanged: (v) => setState(() => overlay.duration = v))), Text('${overlay.duration.toStringAsFixed(1)}s', style: const TextStyle(fontSize: 10))]), Row(children: [const Text('Size', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: .12, max: .9, value: overlay.widthFactor.clamp(.12, .9).toDouble(), onChanged: (v) => setState(() => overlay.widthFactor = v))), IconButton(onPressed: deleteOverlay, icon: const Icon(Icons.delete_outline, color: Colors.red))])]]);
                 case 'Speed':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const Text('SPEED', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
@@ -855,7 +953,7 @@ jobs:
 
             @override
             void dispose() {
-              sequenceTimer?.cancel(); player?.dispose(); previewTransform.dispose(); for (final c in overlayPlayers.values) { c.dispose(); } textController.dispose(); super.dispose();
+              sequenceTimer?.cancel(); player?.dispose(); previewTransform.dispose(); for (final c in overlayPlayers.values) { c.dispose(); } for (final a in audioPlayers.values) { a.dispose(); } textController.dispose(); super.dispose();
             }
 
             @override
