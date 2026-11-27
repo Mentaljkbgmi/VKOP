@@ -2,6 +2,11 @@ name: Build VKOP Android APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/build-apk.yml'
 
 jobs:
   build:
