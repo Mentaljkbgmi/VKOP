@@ -924,6 +924,9 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                 final size = Size(constraints.maxWidth, constraints.maxHeight);
                 final clipScale = item?.scale ?? 1.0;
                 final clipOpacity = item?.opacity ?? 1.0;
+                final animationProgress = (playhead / ((item?.duration ?? 1) < 1 ? (item?.duration ?? 1) : 1)).clamp(0.0, 1.0).toDouble();
+                final animationScale = animationPreset == 'Zoom In' ? .75 + .25 * animationProgress : animationPreset == 'Zoom Out' ? 1.25 - .25 * animationProgress : 1.0;
+                final animationOpacity = animationPreset == 'Fade In' ? animationProgress : animationPreset == 'Fade Out' ? 1.0 - animationProgress : 1.0;
                 final clipOffset = Offset(size.width * ((item?.positionX ?? .5) - .5), size.height * ((item?.positionY ?? .5) - .5));
                 return Stack(clipBehavior: Clip.hardEdge, alignment: Alignment.center, children: [
                   InteractiveViewer(
@@ -938,7 +941,7 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                     child: SizedBox(
                       width: size.width,
                       height: size.height,
-                      child: Center(child: AspectRatio(aspectRatio: aspect, child: ColoredBox(color: canvasBackground, child: Center(child: ClipRRect(borderRadius: stylePreset == 'Rounded' ? BorderRadius.circular(18) : BorderRadius.zero, child: Transform.translate(offset: clipOffset, child: Transform.rotate(angle: item?.rotation ?? 0, child: Transform.scale(scale: clipScale, child: Opacity(opacity: clipOpacity.clamp(0, 1).toDouble(), child: ClipPath(clipper: maskShape == 'Circle' ? _CircleClipper() : maskShape == 'Oval' ? _OvalClipper() : null, child: content))))))))),
+                      child: Center(child: AspectRatio(aspectRatio: aspect, child: ColoredBox(color: canvasBackground, child: Center(child: DecoratedBox(decoration: BoxDecoration(border: stylePreset == 'Border' ? Border.all(color: purple, width: 2) : null, boxShadow: stylePreset == 'Shadow' ? const [BoxShadow(color: Colors.black45, blurRadius: 12, offset: Offset(0, 4))] : const []), child: ClipRRect(borderRadius: stylePreset == 'Rounded' || maskShape == 'Rounded' ? BorderRadius.circular(18) : BorderRadius.zero, child: Transform.translate(offset: clipOffset, child: Transform.rotate(angle: item?.rotation ?? 0, child: Transform.scale(scale: clipScale * animationScale, child: Opacity(opacity: (clipOpacity * animationOpacity).clamp(0, 1).toDouble(), child: ClipPath(clipper: maskShape == 'Circle' ? _CircleClipper() : maskShape == 'Oval' ? _OvalClipper() : null, child: content))))))))),
                     ),
                   ),
                   Positioned(
