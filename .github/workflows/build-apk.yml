@@ -889,23 +889,6 @@ jobs:
               return 'if(lt(t\\,$firstTime)\\,$firstValue\\,$expression)';
             }
 
-            double curveSpeedAt(MediaClip item, double sourcePosition) {
-              final length = (item.trimEnd - item.trimStart).clamp(.1, 999999).toDouble();
-              final t = ((sourcePosition - item.trimStart) / length).clamp(0.0, 1.0);
-              final points = switch (item.curvePreset) {
-                'Bullet' => [1.0, .25, .25, 1.0],
-                'Jump Cut' => [1.0, 4.0, 4.0, 1.0],
-                'Hero' => [1.0, .5, .5, 1.0],
-                'Smooth' => [1.0, 1.5, 1.5, 1.0],
-                'Flash In' => [.25, 1.0, 2.0, 4.0],
-                _ => [1.0, 3.0, .5, 1.0],
-              };
-              final scaled = t * (points.length - 1);
-              final index = scaled.floor().clamp(0, points.length - 2).toInt();
-              final fraction = scaled - index;
-              return (points[index] + (points[index + 1] - points[index]) * fraction).clamp(.1, 16).toDouble();
-            }
-
             String keyframeExpression(List<KeyframePoint> points, String property, double timelineOffset, double fallback) {
               if (points.isEmpty) return fallback.toStringAsFixed(4);
               double value(KeyframePoint point) => switch (property) {
