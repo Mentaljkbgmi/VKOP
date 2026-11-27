@@ -1026,8 +1026,10 @@ jobs:
                   final xExpr = keyframeExpression(clipKeys, 'x', clipTimelineOffset, c.positionX);
                   final yExpr = keyframeExpression(clipKeys, 'y', clipTimelineOffset, c.positionY);
                   final opacityExpr = keyframeExpression(clipKeys, 'opacity', clipTimelineOffset, c.opacity);
-                  final clipAlpha = ",format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(" +
-                    keyframeExpression(clipKeys, 'opacity', clipTimelineOffset, c.opacity, timeVariable: 'T') + ")'";
+                  final clipAlpha = clipKeys.isEmpty
+                    ? (c.opacity < .999 ? ',colorchannelmixer=aa=' + c.opacity.clamp(0, 1).toStringAsFixed(4) : '')
+                    : ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(" +
+                      keyframeExpression(clipKeys, 'opacity', clipTimelineOffset, c.opacity, timeVariable: 'T') + ")'";
                   final transform = clipKeys.isEmpty && (c.scale - 1).abs() < .001 && (c.positionX - .5).abs() < .001 && (c.positionY - .5).abs() < .001 ? '' :
                     ",scale=w='ceil(" + width.toString() + "*max(0.1," + scaleExpr + ")/2)*2':h='ceil(" + height.toString() + "*max(0.1," + scaleExpr + ")/2)*2':eval=frame" +
                     ",pad=w='max(iw," + width.toString() + ")':h='max(ih," + height.toString() + ")':x='(ow-iw)*" + xExpr + "':y='(oh-ih)*" + yExpr + "':color=black@0:eval=frame" +
@@ -1044,8 +1046,10 @@ jobs:
                     for (var k = 0; k < segments.length; k++) {
                       final segment = segments[k];
                       final label = 'curve_' + i.toString() + '_' + k.toString();
-                      final segmentAlpha = ",format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(" +
-                        keyframeExpression(clipKeys, 'opacity', segmentTimelineOffset, c.opacity, timeVariable: 'T') + ")'";
+                      final segmentAlpha = clipKeys.isEmpty
+                        ? (c.opacity < .999 ? ',colorchannelmixer=aa=' + c.opacity.clamp(0, 1).toStringAsFixed(4) : '')
+                        : ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(" +
+                          keyframeExpression(clipKeys, 'opacity', segmentTimelineOffset, c.opacity, timeVariable: 'T') + ")'";
                       final segmentTransform = clipKeys.isEmpty && (c.scale - 1).abs() < .001 && (c.positionX - .5).abs() < .001 && (c.positionY - .5).abs() < .001 ? '' :
                         ",scale=w='ceil(" + width.toString() + "*max(0.1," +
                         keyframeExpression(clipKeys, 'scale', segmentTimelineOffset, c.scale) +
@@ -1134,10 +1138,13 @@ jobs:
                     ? ',chromakey=0x00FF00:' + chromaSimilarity.clamp(0, 1).toStringAsFixed(3) + ':' + chromaBlend.clamp(0, .5).toStringAsFixed(3)
                     : '';
                   final dynamicScale = overlayKeys.isEmpty ? overlayWidth.toString() : "'max(80," + width.toString() + '*' + scaleExpr + ")'";
-                  final dynamicOpacity = keyframeExpression(overlayKeys, 'opacity', startTime, o.opacity, timeVariable: 'T');
+                  final dynamicOpacity = overlayKeys.isEmpty
+                    ? (o.opacity < .999 ? ',colorchannelmixer=aa=' + o.opacity.clamp(0, 1).toStringAsFixed(4) : '')
+                    : ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(" +
+                      keyframeExpression(overlayKeys, 'opacity', startTime, o.opacity, timeVariable: 'T') + ")'";
                   filters.add('[' + inputIndex.toString() + ':v]setpts=PTS-STARTPTS,scale=w=' + dynamicScale +
                     ':h=-1:eval=frame,rotate=' + o.rotation.toStringAsFixed(4) + ':c=none:ow=rotw(iw):oh=roth(ih)' +
-                    keyFilter + ",format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(" + dynamicOpacity + ")[ov" + j.toString() + "]");
+                    keyFilter + ',format=rgba' + dynamicOpacity + '[ov' + j.toString() + ']');
                   final x = width.toString() + '*' + centerXExpr + '-overlay_w/2';
                   final y = height.toString() + '*' + centerYExpr + '-overlay_h/2';
                   filters.add("[" + previous + "][ov" + j.toString() + "]overlay=x=" + x + ":y=" + y +
