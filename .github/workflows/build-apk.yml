@@ -1003,9 +1003,7 @@ jobs:
                     ? '0.75+0.25*min(t/' + projectDuration.toStringAsFixed(3) + ',1)'
                     : '1.25-0.25*min(t/' + projectDuration.toStringAsFixed(3) + ',1)';
                   filters.add('[' + previous + ']scale=' + (width * 1.34).round().toString() + ':' + (height * 1.34).round().toString() +
-                    ',crop=w=' + "'" + width.toString() + '/(' + zoomExpression + ')'" +
-                    ':h=' + "'" + height.toString() + '/(' + zoomExpression + ')'" +
-                    ':eval=frame:x=(iw-ow)/2:y=(ih-oh)/2,scale=' + width.toString() + ':' + height.toString() + '[' + zoomed + ']');
+                    ',crop=w="' + width.toString() + '/(' + zoomExpression + '):h=' + height.toString() + '/(' + zoomExpression + ')",eval=frame:x=(iw-ow)/2:y=(ih-oh)/2,scale=' + width.toString() + ':' + height.toString() + '[' + zoomed + ']');
                   previous = zoomed;
                 }
 
