@@ -190,7 +190,7 @@ jobs:
               final path = Path();
               for (var i = 0; i < values.length; i++) {
                 final x = size.width * i / (values.length - 1);
-                final normalized = (1 - (values[i] / 4)).clamp(0.05, .95);
+                final normalized = (1 - (values[i] / 4)).clamp(0.05, .95).toDouble();
                 final y = size.height * normalized;
                 if (i == 0) { path.moveTo(x, y); } else { path.lineTo(x, y); }
                 canvas.drawCircle(Offset(x, y), 3.5, Paint()..color = purple);
@@ -374,7 +374,7 @@ jobs:
                 default: points = [1, 3, .5, 1]; // Montage
               }
               final scaled = t * (points.length - 1);
-              final index = scaled.floor().clamp(0, points.length - 2);
+              final index = scaled.floor().clamp(0, points.length - 2).toInt();
               final fraction = scaled - index;
               return (points[index] + (points[index + 1] - points[index]) * fraction).clamp(.1, 16).toDouble();
             }
