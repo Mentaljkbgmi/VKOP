@@ -1125,7 +1125,6 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                   ]);
                 case 'Aspect Ratio':
                 case 'Canvas':
-                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('CANVAS RATIO', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)), Wrap(spacing: 5, children: ['Original','9:16','16:9','1:1'].map((r) => ChoiceChip(label: Text(r), selected: cropRatio == r, onSelected: (_) => setState(() => cropRatio = r), visualDensity: VisualDensity.compact)).toList())]);
                 case 'Animation':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const Text('CLIP ANIMATION', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
@@ -1147,7 +1146,7 @@ Old chooseAudio removal            Future<void> addOverlay() async {
                     const Text('CHROMA KEY', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                     SwitchListTile(contentPadding: EdgeInsets.zero, dense: true, title: const Text('Enable green-screen key', style: TextStyle(fontSize: 11)), value: chromaKeyEnabled, onChanged: (v) => setState(() => chromaKeyEnabled = v)),
                     Row(children: [const Text('Similarity', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: 1, value: chromaSimilarity, onChanged: (v) => setState(() => chromaSimilarity = v)))]),
-                    Row(children: [const Text('Blend', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: .5, value: chromaBlend, onChanged: (v) => setState(() => chromaBlend = v))]),
+                    Row(children: [const Text('Blend', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: .5, value: chromaBlend, onChanged: (v) => setState(() => chromaBlend = v)))]),
                     const Text('Key settings are saved in the project preview; actual pixel removal will be enabled with the chromakey FFmpeg render filter.', style: TextStyle(fontSize: 10, color: Colors.black54))
                   ]);
                 case 'Voice Effects':
