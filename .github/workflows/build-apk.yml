@@ -960,7 +960,7 @@ jobs:
                   final blur = 'motion_blur_base';
                   final frames = motionBlurAmount < .34 ? 2 : motionBlurAmount < .67 ? 3 : 4;
                   filters.add('[' + previous + ']tmix=frames=' + frames.toString() + ':weights=' +
-                    List.filled(frames, '1').join(' ') + '[' + blur + ']');
+                    "'" + List.filled(frames, '1').join(' ') + "'" + '[' + blur + ']');
                   previous = blur;
                 }
                 for (var j = 0; j < overlays.length; j++) {
