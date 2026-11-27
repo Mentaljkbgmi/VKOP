@@ -946,7 +946,7 @@ jobs:
                   final clipSpeed = c.speed.clamp(.1, 16).toDouble();
                   final segments = <Map<String, double>>[];
                   if (c.isVideo && c.speedMode == 'Curve') {
-                    const segmentCount = 24;
+                    final segmentCount = (sourceDuration * exportFps / 4).floor().clamp(1, 24).toInt();
                     final sourceStep = sourceDuration / segmentCount;
                     var outputDuration = 0.0;
                     for (var segment = 0; segment < segmentCount; segment++) {
