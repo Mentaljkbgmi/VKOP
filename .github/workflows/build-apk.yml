@@ -783,7 +783,7 @@ jobs:
               }
             }
 
-Old chooseAudio removal            Future<void> addOverlay() async {
+            Future<void> addOverlay() async {
               try {
                 final r = await FilePicker.pickFiles(type: FileType.media);
                 if (r.isEmpty) return;
