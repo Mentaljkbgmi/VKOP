@@ -497,6 +497,7 @@ jobs:
             double _gestureX = .5;
             double _gestureY = .5;
             double _gestureRotation = 0;
+            Offset _gestureFocal = Offset.zero;
             final TextEditingController textController = TextEditingController();
             String overlayText = '';
             String selectedSticker = '';
@@ -1130,14 +1131,14 @@ jobs:
 
             void beginOverlayGesture(ScaleStartDetails d) {
               final o = currentOverlay; if (o == null) return;
-              _gestureScale = o.widthFactor; _gestureX = o.centerX; _gestureY = o.centerY; _gestureRotation = o.rotation;
+              _gestureScale = o.widthFactor; _gestureX = o.centerX; _gestureY = o.centerY; _gestureRotation = o.rotation; _gestureFocal = d.focalPoint;
             }
             void updateOverlayGesture(ScaleUpdateDetails d, Size size) {
               final o = currentOverlay; if (o == null) return;
               setState(() {
                 o.widthFactor = (_gestureScale * d.scale).clamp(.12, .9);
-                o.centerX = (_gestureX + d.focalPointDelta.dx / size.width).clamp(0.05, .95);
-                o.centerY = (_gestureY + d.focalPointDelta.dy / size.height).clamp(0.05, .95);
+                o.centerX = (_gestureX + (d.focalPoint.dx - _gestureFocal.dx) / size.width).clamp(0.05, .95);
+                o.centerY = (_gestureY + (d.focalPoint.dy - _gestureFocal.dy) / size.height).clamp(0.05, .95);
                 o.rotation = _gestureRotation + d.rotation;
               });
             }
