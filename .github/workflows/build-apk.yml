@@ -335,7 +335,10 @@ jobs:
             double opacity = 1;
             final List<KeyframePoint> keyframes = [];
             final String kind;
-            final String content;
+            String content;
+            double textSize = 30;
+            Color textColor = Colors.white;
+            bool textBold = true;
 
             OverlayClip({required this.path, required this.name, required this.isVideo, this.kind = 'media', this.content = ''});
           }
@@ -1071,6 +1074,19 @@ jobs:
               }
             }
 
+            void addTextLayer() {
+              final value = textController.text.trim();
+              if (value.isEmpty) { toast('Type text before adding a text layer.'); return; }
+              final layer = OverlayClip(path: '', name: 'Text: ${value}', isVideo: false, kind: 'text', content: value)
+                ..start = projectTime
+                ..duration = (totalTimelineDuration - projectTime).clamp(.5, 3600).toDouble()
+                ..widthFactor = .78
+                ..textSize = textSize
+                ..textColor = selectedTextColor
+                ..textBold = textBold;
+              setState(() { overlays.add(layer); selectedOverlay = overlays.length - 1; selectedAudio = -1; overlayText = ''; activeTool = 'Overlay'; });
+            }
+
             void addSticker(String emoji) {
               final layer = OverlayClip(path: '', name: 'Sticker $emoji', isVideo: false, kind: 'emoji', content: emoji)
                 ..start = 0
@@ -1200,18 +1216,25 @@ jobs:
                   .replaceAll(']', '\\]');
             }
 
-            Future<String> renderEmojiPng(String emoji) async {
+            Future<String> renderOverlayPng(OverlayClip layer) async {
               final recorder = ui.PictureRecorder();
               final canvas = ui.Canvas(recorder);
-              final painter = TextPainter(text: TextSpan(text: emoji, style: const TextStyle(fontSize: 360)), textDirection: TextDirection.ltr, textAlign: TextAlign.center);
-              painter.layout(maxWidth: 500);
+              final isEmoji = layer.kind == 'emoji';
+              final style = TextStyle(
+                fontSize: isEmoji ? 360 : (layer.textSize * 2).clamp(24, 180).toDouble(),
+                color: layer.textColor,
+                fontWeight: layer.textBold ? FontWeight.bold : FontWeight.normal,
+                shadows: isEmoji ? const [] : const [Shadow(color: Colors.black87, blurRadius: 5, offset: Offset(2, 2))],
+              );
+              final painter = TextPainter(text: TextSpan(text: layer.content, style: style), textDirection: TextDirection.ltr, textAlign: TextAlign.center);
+              painter.layout(maxWidth: 480);
               painter.paint(canvas, Offset((512 - painter.width) / 2, (512 - painter.height) / 2));
               final picture = recorder.endRecording();
               final image = await picture.toImage(512, 512);
               final data = await image.toByteData(format: ui.ImageByteFormat.png);
-              if (data == null) throw StateError('Could not render emoji layer.');
+              if (data == null) throw StateError('Could not render overlay layer.');
               final dir = await getTemporaryDirectory();
-              final file = File('${dir.path}/vkop_emoji_${DateTime.now().microsecondsSinceEpoch}.png');
+              final file = File('${dir.path}/vkop_overlay_${DateTime.now().microsecondsSinceEpoch}.png');
               await file.writeAsBytes(data.buffer.asUint8List(), flush: true);
               image.dispose();
               picture.dispose();
@@ -1265,10 +1288,10 @@ jobs:
                 }
                 final exportOverlays = <OverlayClip>[];
                 for (final layer in overlays) {
-                  if (layer.kind == 'emoji') {
-                    final emojiPath = await renderEmojiPng(layer.content);
-                    temporaryAudioFiles.add(File(emojiPath));
-                    exportOverlays.add(OverlayClip(path: emojiPath, name: layer.name, isVideo: false)
+                  if (layer.kind == 'emoji' || layer.kind == 'text') {
+                    final overlayPng = await renderOverlayPng(layer);
+                    temporaryAudioFiles.add(File(overlayPng));
+                    exportOverlays.add(OverlayClip(path: overlayPng, name: layer.name, isVideo: false)
                       ..start = layer.start ..duration = layer.duration ..widthFactor = layer.widthFactor
                       ..centerX = layer.centerX ..centerY = layer.centerY ..rotation = layer.rotation
                       ..opacity = layer.opacity ..keyframes.addAll(layer.keyframes));
@@ -1825,6 +1848,7 @@ jobs:
               final width = size.width * o.widthFactor;
               Widget child;
               if (o.kind == 'emoji') child = SizedBox(width: width, height: width, child: FittedBox(fit: BoxFit.contain, child: Text(o.content, style: const TextStyle(fontSize: 180))));
+              else if (o.kind == 'text') child = SizedBox(width: width, child: FittedBox(fit: BoxFit.scaleDown, child: Text(o.content, textAlign: TextAlign.center, style: TextStyle(fontSize: o.textSize * (o.widthFactor / .78), color: o.textColor, fontWeight: o.textBold ? FontWeight.bold : FontWeight.normal, shadows: const [Shadow(color: Colors.black87, blurRadius: 4, offset: Offset(1, 1))]))));
               else if (o.isVideo && overlayPlayers[o.path]?.value.isInitialized == true) child = VideoPlayer(overlayPlayers[o.path]!);
               else if (!o.isVideo) child = Image.file(File(o.path), fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image));
               else child = Container(color: Colors.black12, child: const Center(child: Icon(Icons.movie, color: Colors.white, size: 34)));
@@ -1863,7 +1887,7 @@ jobs:
               for (var i = 0; i < overlays.length; i++) {
                 final layer = overlays[i];
                 final blockWidth = (layer.duration * timelinePixelsPerSecond).clamp(42.0, 12000.0).toDouble();
-                overlayBlocks.add(Positioned(left: 60 + layer.start * timelinePixelsPerSecond, top: 3, bottom: 3, width: blockWidth, child: InkWell(onTap: () => setState(() { selectedOverlay = i; selectedAudio = -1; activeTool = 'Overlay'; }), child: Container(margin: const EdgeInsets.only(right: 3), padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4), decoration: BoxDecoration(color: selectedOverlay == i ? const Color(0xFFE9E0FF) : const Color(0xFFF3F0FA), borderRadius: BorderRadius.circular(5), border: Border.all(color: selectedOverlay == i ? purple : const Color(0xFFD8D2E4))), child: Row(children: [Icon(layer.kind == 'emoji' ? Icons.emoji_emotions : layer.isVideo ? Icons.videocam : Icons.image, size: 12, color: purple), const SizedBox(width: 3), Expanded(child: Text(layer.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 9)))])))));
+                overlayBlocks.add(Positioned(left: 60 + layer.start * timelinePixelsPerSecond, top: 3, bottom: 3, width: blockWidth, child: InkWell(onTap: () => setState(() { selectedOverlay = i; selectedAudio = -1; activeTool = 'Overlay'; }), child: Container(margin: const EdgeInsets.only(right: 3), padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4), decoration: BoxDecoration(color: selectedOverlay == i ? const Color(0xFFE9E0FF) : const Color(0xFFF3F0FA), borderRadius: BorderRadius.circular(5), border: Border.all(color: selectedOverlay == i ? purple : const Color(0xFFD8D2E4))), child: Row(children: [Icon(layer.kind == 'emoji' ? Icons.emoji_emotions : layer.kind == 'text' ? Icons.title : layer.isVideo ? Icons.videocam : Icons.image, size: 12, color: purple), const SizedBox(width: 3), Expanded(child: Text(layer.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 9)))])))));
               }
               final audioBlocks = <Widget>[];
               for (var i = 0; i < audioTracks.length; i++) {
@@ -2130,7 +2154,7 @@ jobs:
                 case 'Text':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const Text('TEXT OVERLAY', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                    TextField(controller: textController, decoration: const InputDecoration(hintText: 'Type text for preview', isDense: true), onChanged: (v) => setState(() => overlayText = v), onSubmitted: (v) => setState(() => overlayText = v)),
+                    TextField(controller: textController, decoration: const InputDecoration(hintText: 'Type text for a new layer', isDense: true), onChanged: (v) => setState(() { overlayText = v; if (currentOverlay?.kind == 'text') currentOverlay!.content = v; }), onSubmitted: (v) => setState(() => overlayText = v)),
                     const SizedBox(height: 8),
                     const Text('PRE-DESIGNED TEMPLATES', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
                     Wrap(spacing: 5, runSpacing: 4, children: textTemplateOptions.map((v) => ChoiceChip(label: Text(v, style: const TextStyle(fontSize: 10)), selected: selectedTextTemplate == v, onSelected: (_) => applyTextTemplate(v), visualDensity: VisualDensity.compact)).toList()),
@@ -2140,7 +2164,7 @@ jobs:
                     const SizedBox(height: 8),
                     const Text('TEXT ANIMATION', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
                     Wrap(spacing: 5, runSpacing: 4, children: textAnimationOptions.map((v) => ChoiceChip(label: Text(v, style: const TextStyle(fontSize: 10)), selected: textAnimationPreset == v, onSelected: (_) => setState(() => textAnimationPreset = v), visualDensity: VisualDensity.compact)).toList()),
-                    Wrap(spacing: 5, children: [TextButton(onPressed: () => setState(() => overlayText = textController.text), child: const Text('Add text')), TextButton(onPressed: () => setState(() => overlayText = ''), child: const Text('Remove text'))]),
+                    Wrap(spacing: 5, children: [TextButton.icon(onPressed: addTextLayer, icon: const Icon(Icons.add, size: 16), label: const Text('Add text layer')), TextButton(onPressed: () { if (currentOverlay?.kind == 'text') deleteOverlay(); else setState(() => overlayText = ''); }, child: const Text('Remove text'))]),
                     Wrap(spacing: 5, children: ['White','Black','Yellow','Purple','Red'].map((v) => ChoiceChip(label: Text(v), selected: textColorName == v, onSelected: (_) => setState(() => textColorName = v), visualDensity: VisualDensity.compact)).toList()),
                     Row(children: [const Text('Size', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 12, max: 72, value: textSize, onChanged: (v) => setState(() => textSize = v))), Text('${textSize.round()}', style: const TextStyle(fontSize: 10))]),
                     CheckboxListTile(contentPadding: EdgeInsets.zero, dense: true, title: const Text('Bold text', style: TextStyle(fontSize: 11)), value: textBold, onChanged: (v) => setState(() => textBold = v ?? true))
