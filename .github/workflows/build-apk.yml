@@ -696,7 +696,7 @@ jobs:
                   final drift = (audio.position - target).inMilliseconds.abs();
                   if (drift > 280) await audio.seek(target);
                   await audio.setVolume(track.volume.clamp(0, 1).toDouble());
-                  if (!audio.playing) audio.play().catchError((_) {});
+                  if (!audio.playing) unawaited(audio.play().catchError((_) {}));
                 }
 
                 for (final layer in overlays) {
@@ -822,7 +822,7 @@ jobs:
                 final next = VideoPlayerController.file(File(item.path)); await next.initialize();
                 if (!mounted || token != sequenceToken || !playingSequence) { await next.dispose(); return; }
                 item.duration = next.value.duration.inMilliseconds / 1000; if (item.trimEnd <= 0 || item.trimEnd > item.duration) item.trimEnd = item.duration;
-                player = next; await next.setVolume(item.audioMuted ? 0 : item.audioVolume); await next.seekTo(Duration(milliseconds: (item.trimStart * 1000).round())); await next.setPlaybackSpeed(item.speed); await next.play(); setState(() => loading = false);
+                player = next; await next.setVolume(item.audioMuted ? 0 : item.audioVolume); await next.seekTo(Duration(milliseconds: (item.trimStart * 1000).round())); await next.setPlaybackSpeed(item.speed); await next.play(); await syncTimelineLayers(); setState(() => loading = false);
                 var appliedSpeed = item.speed;
                 sequenceTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
                   if (!mounted || token != sequenceToken || !playingSequence) { timer.cancel(); return; }
@@ -1821,7 +1821,7 @@ jobs:
               } else if (item == null) {
                 mediaContent = const Center(child: Text('No clip selected', style: TextStyle(color: Colors.white70)));
               } else if (!item.isVideo) {
-                mediaContent = Image.file(File(item.path), fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white));
+                mediaContent = Image.file(File(item.path), fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white));
               } else if (player == null || !player!.value.isInitialized) {
                 mediaContent = const Center(child: Text('Video preview unavailable', style: TextStyle(color: Colors.white70)));
               } else {
@@ -2153,9 +2153,9 @@ jobs:
                     if (item != null) ...[
                       Row(children: [Text('Keyframes: ${item.keyframes.length}', style: const TextStyle(fontSize: 10)), const Spacer(), const Text('Use + on timeline', style: TextStyle(fontSize: 9, color: Colors.black45))]),
                       Row(children: [const SizedBox(width: 52, child: Text('Scale', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: .5, max: 3, value: item.scale.clamp(.5, 3).toDouble(), onChanged: (v) => setState(() => item.scale = v))), Text('${item.scale.toStringAsFixed(1)}x', style: const TextStyle(fontSize: 10))]),
-                      Row(children: [const SizedBox(width: 52, child: Text('X', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 1, value: item.positionX.clamp(0, 1).toDouble(), onChanged: (v) => setState(() => item.positionX = v)))]),
-                      Row(children: [const SizedBox(width: 52, child: Text('Y', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 1, value: item.positionY.clamp(0, 1).toDouble(), onChanged: (v) => setState(() => item.positionY = v)))]),
-                      Row(children: [const SizedBox(width: 52, child: Text('Opacity', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 1, value: item.opacity.clamp(0, 1).toDouble(), onChanged: (v) => setState(() => item.opacity = v)))]),
+                      Row(children: [const SizedBox(width: 52, child: Text('X', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 1, value: item.positionX.clamp(0, 1).toDouble(), onChanged: (v) => setState(() => item.positionX = v))), Text(item.positionX.toStringAsFixed(2), style: const TextStyle(fontSize: 10))]),
+                      Row(children: [const SizedBox(width: 52, child: Text('Y', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 1, value: item.positionY.clamp(0, 1).toDouble(), onChanged: (v) => setState(() => item.positionY = v))), Text(item.positionY.toStringAsFixed(2), style: const TextStyle(fontSize: 10))]),
+                      Row(children: [const SizedBox(width: 52, child: Text('Opacity', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 1, value: item.opacity.clamp(0, 1).toDouble(), onChanged: (v) => setState(() => item.opacity = v))), Text('${(item.opacity * 100).round()}%', style: const TextStyle(fontSize: 10))]),
                       if (item.isVideo && item.duration > 0) RangeSlider(min: 0, max: item.duration, values: RangeValues(item.trimStart.clamp(0, item.duration).toDouble(), item.trimEnd.clamp(0, item.duration).toDouble()), onChanged: (v) { if (v.end-v.start > .1) setState(() { item.trimStart = v.start; item.trimEnd = v.end; }); }),
                       if (item.isVideo) Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('IN ${time(item.trimStart)}', style: const TextStyle(fontSize: 10)), Text('OUT ${time(item.trimEnd)}', style: const TextStyle(fontSize: 10))]),
                     ],
@@ -2342,8 +2342,8 @@ jobs:
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const Text('TRANSFORM', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                     if (item != null) ...[
-                      Row(children: [const Text('Scale', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: .1, max: 5, value: item.scale.clamp(.1, 5).toDouble(), onChanged: (v) => setState(() => item.scale = v)))]),
-                      Row(children: [const Text('Rotate', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: -3.14, max: 3.14, value: item.rotation.clamp(-3.14, 3.14).toDouble(), onChanged: (v) => setState(() => item.rotation = v)))]),
+                      Row(children: [const Text('Scale', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: .1, max: 5, value: item.scale.clamp(.1, 5).toDouble(), onChanged: (v) => setState(() => item.scale = v))), Text('${item.scale.toStringAsFixed(2)}x', style: const TextStyle(fontSize: 10))]),
+                      Row(children: [const Text('Rotate', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: -3.14, max: 3.14, value: item.rotation.clamp(-3.14, 3.14).toDouble(), onChanged: (v) => setState(() => item.rotation = v))), Text('${(item.rotation * 180 / 3.141592653589793).toStringAsFixed(1)}°', style: const TextStyle(fontSize: 10))]),
                     ]
                   ]);
                 case 'Text':
