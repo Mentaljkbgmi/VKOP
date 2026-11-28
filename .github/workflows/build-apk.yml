@@ -1883,7 +1883,7 @@ jobs:
                     if (audio != null) ...[
                       Text(audio.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
                       Row(children: [const Text('Volume', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: 1, divisions: 100, value: audio.volume.clamp(0, 1).toDouble(), onChanged: (v) { setState(() => audio.volume = v); audioPlayers[audio.id]?.setVolume(audio.muted ? 0 : v); })), Text('${(audio.volume * 100).round()}%', style: const TextStyle(fontSize: 10)), IconButton(visualDensity: VisualDensity.compact, onPressed: () { setState(() => audio.muted = !audio.muted); audioPlayers[audio.id]?.setVolume(audio.muted ? 0 : audio.volume); }, icon: Icon(audio.muted ? Icons.volume_off : Icons.volume_up, size: 18))]),
-                      Row(children: [Text('Duration ${time(audio.duration)}', style: const TextStyle(fontSize: 10)), const Spacer(), TextButton.icon(onPressed: addKeyframe, icon: const Icon(Icons.key, size: 16), label: Text('Keyframe (${audio.keyframes.length})')), IconButton(onPressed: () async { final p = audioPlayers.remove(audio.id); await p?.dispose(); setState(() { audioTracks.removeAt(selectedAudio); selectedAudio = audioTracks.isEmpty ? -1 : (selectedAudio >= audioTracks.length ? audioTracks.length - 1 : selectedAudio); }); }, icon: const Icon(Icons.delete_outline, color: Colors.red, size: 18))]),
+                      Row(children: [Text('Duration ${time(audio.duration)}', style: const TextStyle(fontSize: 10)), const Spacer(), Text('Keyframes: ${audio.keyframes.length} · use + on timeline', style: const TextStyle(fontSize: 9, color: Colors.black45)), IconButton(onPressed: () async { final p = audioPlayers.remove(audio.id); await p?.dispose(); setState(() { audioTracks.removeAt(selectedAudio); selectedAudio = audioTracks.isEmpty ? -1 : (selectedAudio >= audioTracks.length ? audioTracks.length - 1 : selectedAudio); }); }, icon: const Icon(Icons.delete_outline, color: Colors.red, size: 18))]),
                     ],
                     Wrap(spacing: 6, children: audioTracks.asMap().entries.map((entry) => ChoiceChip(label: Text(entry.value.name, overflow: TextOverflow.ellipsis), selected: selectedAudio == entry.key, onSelected: (_) => setState(() { selectedAudio = entry.key; selectedOverlay = -1; }))).toList()),
                     const Divider(height: 8),
@@ -2007,11 +2007,12 @@ jobs:
                 case 'Canvas':
                 case 'Background':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    const Text('CANVAS BACKGROUND', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    const Text('CANVAS RATIO', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                    Wrap(spacing: 5, children: ['Original','9:16','16:9','1:1'].map((v) => ChoiceChip(label: Text(v), selected: cropRatio == v, onSelected: (_) => setState(() => cropRatio = v), visualDensity: VisualDensity.compact)).toList()),
+                    const SizedBox(height: 5),
+                    const Text('CANVAS BACKGROUND', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
                     Wrap(spacing: 5, children: ['Black','White','Grey','Purple','Green','Transparent'].map((v) => ChoiceChip(label: Text(v), selected: backgroundColorName == v, onSelected: (_) => setState(() => backgroundColorName = v), visualDensity: VisualDensity.compact)).toList())
                   ]);
-                case 'Aspect Ratio':
-                case 'Canvas':
                 case 'Animation':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const Text('CLIP ANIMATION', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
