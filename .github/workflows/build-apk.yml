@@ -768,8 +768,8 @@ jobs:
             Future<void> importCubeLut() async {
               try {
                 final result = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: ['cube']);
-                if (result == null || result.files.isEmpty || result.files.first.path == null) return;
-                setState(() => customLutPath = result.files.first.path!);
+                if (result == null || result.isEmpty || result.first.path == null) return;
+                setState(() => customLutPath = result.first.path!);
                 toast('Custom .cube LUT selected. It will be applied on export.');
               } catch (e) { toast('Could not import LUT: ' + e.toString()); }
             }
