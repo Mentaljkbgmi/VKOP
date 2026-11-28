@@ -880,7 +880,7 @@ jobs:
                 child: Row(children: [
                   SizedBox(width: 91, child: Text(label, style: const TextStyle(fontSize: 10, color: Color(0xFF41414A)))),
                   Expanded(child: Slider(min: min, max: max, value: value.clamp(min, max).toDouble(), onChanged: changed)),
-                  SizedBox(width: 43, child: Text(value.toStringAsFixed(0), textAlign: TextAlign.end, style: const TextStyle(fontSize: 10, fontFeatures: [FontFeature.tabularFigures()]))),
+                  SizedBox(width: 43, child: Text(value.toStringAsFixed(0), textAlign: TextAlign.end, style: const TextStyle(fontSize: 10, fontFeatures: [ui.FontFeature.tabularFigures()]))),
                 ]),
               );
             }
