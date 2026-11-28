@@ -1956,7 +1956,7 @@ jobs:
               final totalFrames = (seconds * fps).floor();
               final wholeSeconds = totalFrames ~/ fps;
               final frames = totalFrames % fps;
-              return '${time(wholeSeconds)}:${frames.toString().padLeft(2, '0')}';
+              return '${time(wholeSeconds.toDouble())}:${frames.toString().padLeft(2, '0')}';
             }
             double get timelineContentWidth => totalTimelineDuration > 0 ? (totalTimelineDuration * timelinePixelsPerSecond).clamp(1.0, 2000000.0).toDouble() : 500.0;
 
