@@ -870,6 +870,61 @@ jobs:
               toast('Clip duplicated on the main track.');
             }
 
+            void resetActiveTool() {
+              final item = current;
+              final overlay = currentOverlay;
+              final audio = currentAudio;
+              if (activeTool == 'Adjust') { resetAdjustments(); return; }
+              if (activeTool == 'Edit' || activeTool == 'Home' || activeTool == 'Split') {
+                toast('There are no adjustable values to reset in this tool.'); return;
+              }
+              setState(() {
+                switch (activeTool) {
+                  case 'Transform':
+                    if (overlay != null) { overlay.centerX = .5; overlay.centerY = .5; overlay.widthFactor = .34; overlay.rotation = 0; overlay.opacity = 1; }
+                    else if (item != null) { item.scale = 1; item.positionX = .5; item.positionY = .5; item.rotation = 0; item.opacity = 1; }
+                    break;
+                  case 'Overlay':
+                  case 'Stickers':
+                    if (overlay != null) { overlay.centerX = .5; overlay.centerY = .5; overlay.widthFactor = .34; overlay.rotation = 0; overlay.opacity = 1; overlay.start = 0; }
+                    break;
+                  case 'Audio':
+                    if (audio != null) { audio.volume = 1; audio.muted = false; }
+                    if (item != null) { item.audioVolume = 1; item.audioMuted = false; }
+                    break;
+                  case 'Speed':
+                    if (item != null) { item.speed = 1; item.speedMode = 'Normal'; item.curvePreset = 'Montage'; speed = 1; }
+                    break;
+                  case 'Trim':
+                    if (item != null) { item.trimStart = 0; item.trimEnd = item.duration; playhead = 0; }
+                    break;
+                  case 'Animation': animationPreset = 'None'; break;
+                  case 'Style': stylePreset = 'None'; break;
+                  case 'Mask': maskShape = 'None'; break;
+                  case 'Filters':
+                  case 'Effects': filter = 'None'; motionBlurAmount = 0; break;
+                  case 'Canvas':
+                  case 'Background': cropRatio = 'Original'; backgroundColorName = 'Black'; break;
+                  case 'Chroma Key': chromaKeyEnabled = false; chromaSimilarity = .25; chromaBlend = .05; break;
+                  case 'Voice Effects': voiceEffect = 'Normal'; break;
+                  case 'Noise Reduction': noiseReductionEnabled = false; break;
+                  case 'Text':
+                    textSize = 30; textBold = true; selectedTextFont = 'Roboto'; selectedTextTemplate = 'Classic'; textAnimationPreset = 'None'; textColorName = 'White';
+                    if (overlay != null && overlay.kind == 'text') { overlay.textSize = 30; overlay.textBold = true; overlay.textColor = Colors.white; }
+                    break;
+                  case 'Export': exportResolution = '1080p'; exportFps = 60; break;
+                  default: break;
+                }
+              });
+              if (activeTool == 'Audio') {
+                player?.setVolume(item?.audioMuted == true ? 0 : (item?.audioVolume ?? 1));
+                if (audio != null) audioPlayers[audio.id]?.setVolume(audio.muted ? 0 : audio.volume);
+              }
+              if (activeTool == 'Speed' && player?.value.isInitialized == true) player!.setPlaybackSpeed(1);
+              if (activeTool == 'Trim' && item != null && player?.value.isInitialized == true) player!.seekTo(Duration.zero);
+              toast('${activeTool} settings reset to defaults.');
+            }
+
             void resetAdjustments() {
               setState(() {
                 brightness = 0; contrast = 1; saturation = 1; filter = 'None';
@@ -2156,7 +2211,7 @@ jobs:
               width: double.infinity, constraints: const BoxConstraints(minHeight: 150, maxHeight: 205),
               padding: const EdgeInsets.fromLTRB(8, 4, 8, 8), decoration: const BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: Color(0xFFE5E5EA)))),
               child: Column(children: [
-                SizedBox(height: 34, child: Row(children: [IconButton(visualDensity: VisualDensity.compact, onPressed: () => setState(() => activeTool = 'Home'), icon: const Icon(Icons.arrow_back, size: 21)), Expanded(child: Text(activeTool.toUpperCase(), style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: .8))), if (activeTool == 'Audio') IconButton(visualDensity: VisualDensity.compact, onPressed: chooseAudio, icon: const Icon(Icons.add, color: purple))])),
+                SizedBox(height: 34, child: Row(children: [IconButton(visualDensity: VisualDensity.compact, onPressed: () => setState(() => activeTool = 'Home'), icon: const Icon(Icons.arrow_back, size: 21)), Expanded(child: Text(activeTool.toUpperCase(), style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: .8))), if (!['Edit','Home'].contains(activeTool)) TextButton.icon(onPressed: resetActiveTool, icon: const Icon(Icons.restart_alt, size: 15), label: const Text('Reset', style: TextStyle(fontSize: 10)), style: TextButton.styleFrom(minimumSize: Size.zero, padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4))), if (activeTool == 'Audio') IconButton(visualDensity: VisualDensity.compact, onPressed: chooseAudio, icon: const Icon(Icons.add, color: purple))])),
                 Expanded(child: SingleChildScrollView(child: toolPanel()))
               ]));
             Widget chip(String label, IconData icon, VoidCallback action) => ActionChip(avatar: Icon(icon, size: 15), label: Text(label, style: const TextStyle(fontSize: 11)), onPressed: action, visualDensity: VisualDensity.compact);
@@ -2200,7 +2255,7 @@ jobs:
                     const Text('Audio preview mixing works during playback. Final video export audio rendering is a separate export milestone.', style: TextStyle(fontSize: 10, color: Colors.black54))
                   ]);
                 case 'Overlay':
-                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [const Expanded(child: Text('OVERLAY LAYERS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))), OutlinedButton.icon(onPressed: addOverlay, icon: const Icon(Icons.add, size: 16), label: const Text('Add layer'))]), if (overlay != null) Row(children: [Text('Keyframes: ${overlay.keyframes.length}', style: const TextStyle(fontSize: 10)), const Spacer(), const Text('Use + on timeline', style: TextStyle(fontSize: 9, color: Colors.black45))]), if (overlay == null) const Text('Add a photo, video or GIF. Select its layer, then drag or pinch it on the preview.', style: TextStyle(fontSize: 10, color: Colors.black54)) else ...[Text(overlay.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)), Row(children: [const Text('Start', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: 120, value: overlay.start.clamp(0, 120).toDouble(), onChanged: (v) => setState(() => overlay.start = v))), Text('${overlay.start.toStringAsFixed(1)}s', style: const TextStyle(fontSize: 10))]), Row(children: [const Text('Duration', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: .5, max: 30, value: overlay.duration.clamp(.5, 30).toDouble(), onChanged: (v) => setState(() => overlay.duration = v))), Text('${overlay.duration.toStringAsFixed(1)}s', style: const TextStyle(fontSize: 10))]), Row(children: [const Text('Size', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: .12, max: .9, value: overlay.widthFactor.clamp(.12, .9).toDouble(), onChanged: (v) => setState(() => overlay.widthFactor = v))), IconButton(onPressed: deleteOverlay, icon: const Icon(Icons.delete_outline, color: Colors.red))])]]);
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [const Expanded(child: Text('OVERLAY LAYERS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))), OutlinedButton.icon(onPressed: addOverlay, icon: const Icon(Icons.add, size: 16), label: const Text('Add layer'))]), if (overlay != null) Row(children: [Text('Keyframes: ${overlay.keyframes.length}', style: const TextStyle(fontSize: 10)), const Spacer(), const Text('Use + on timeline', style: TextStyle(fontSize: 9, color: Colors.black45))]), if (overlay == null) const Text('Add a photo, video or GIF. Select its layer, then drag or pinch it on the preview.', style: TextStyle(fontSize: 10, color: Colors.black54)) else ...[Text(overlay.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)), Row(children: [const Text('Start', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: 120, value: overlay.start.clamp(0, 120).toDouble(), onChanged: (v) => setState(() => overlay.start = v))), Text('${overlay.start.toStringAsFixed(1)}s', style: const TextStyle(fontSize: 10))]), Row(children: [const Text('Duration', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: .5, max: 30, value: overlay.duration.clamp(.5, 30).toDouble(), onChanged: (v) => setState(() => overlay.duration = v))), Text('${overlay.duration.toStringAsFixed(1)}s', style: const TextStyle(fontSize: 10))]), Row(children: [const Text('Size', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: .12, max: .9, value: overlay.widthFactor.clamp(.12, .9).toDouble(), onChanged: (v) => setState(() => overlay.widthFactor = v))), Text('${(overlay.widthFactor * 100).round()}%', style: const TextStyle(fontSize: 10)), IconButton(onPressed: deleteOverlay, icon: const Icon(Icons.delete_outline, color: Colors.red))])]]);
                 case 'Speed':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const Text('SPEED', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
@@ -2342,8 +2397,8 @@ jobs:
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const Text('CHROMA KEY', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                     SwitchListTile(contentPadding: EdgeInsets.zero, dense: true, title: const Text('Enable green-screen key', style: TextStyle(fontSize: 11)), value: chromaKeyEnabled, onChanged: (v) => setState(() => chromaKeyEnabled = v)),
-                    Row(children: [const Text('Similarity', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: 1, value: chromaSimilarity, onChanged: (v) => setState(() => chromaSimilarity = v)))]),
-                    Row(children: [const Text('Blend', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: .5, value: chromaBlend, onChanged: (v) => setState(() => chromaBlend = v)))]),
+                    Row(children: [const Text('Similarity', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: 1, value: chromaSimilarity, onChanged: (v) => setState(() => chromaSimilarity = v))), Text('${(chromaSimilarity * 100).round()}%', style: const TextStyle(fontSize: 10))]),
+                    Row(children: [const Text('Blend', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 0, max: .5, value: chromaBlend, onChanged: (v) => setState(() => chromaBlend = v))), Text('${(chromaBlend * 100).round()}%', style: const TextStyle(fontSize: 10))]),
                     const Text('Chroma key is rendered on overlay layers during export; the current key color is green.', style: TextStyle(fontSize: 10, color: Colors.black54))
                   ]);
                 case 'Voice Effects':
@@ -2374,7 +2429,7 @@ jobs:
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const Text('TRANSFORM', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                     if (item != null) ...[
-                      Row(children: [const SizedBox(width: 42, child: Text('Scale', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: .1, max: 5, value: item.scale.clamp(.1, 5).toDouble(), onChanged: (v) => setState(() => item.scale = v))), Text('${item.scale.toStringAsFixed(2)}x', style: const TextStyle(fontSize: 10))]),
+                      Row(children: [const SizedBox(width: 42, child: Text('Scale', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: .1, max: 5, value: item.scale.clamp(.1, 5).toDouble(), onChanged: (v) => setState(() => item.scale = v))), Text('${(item.scale * 100).round()}%', style: const TextStyle(fontSize: 10))]),
                       Row(children: [const SizedBox(width: 42, child: Text('X', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 1, value: item.positionX.clamp(0, 1).toDouble(), onChanged: (v) => setState(() => item.positionX = v))), Text(item.positionX.toStringAsFixed(2), style: const TextStyle(fontSize: 10))]),
                       Row(children: [const SizedBox(width: 42, child: Text('Y', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 1, value: item.positionY.clamp(0, 1).toDouble(), onChanged: (v) => setState(() => item.positionY = v))), Text(item.positionY.toStringAsFixed(2), style: const TextStyle(fontSize: 10))]),
                       Row(children: [const SizedBox(width: 42, child: Text('Rotate', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: -3.14, max: 3.14, value: item.rotation.clamp(-3.14, 3.14).toDouble(), onChanged: (v) => setState(() => item.rotation = v))), Text('${(item.rotation * 180 / 3.141592653589793).toStringAsFixed(1)}°', style: const TextStyle(fontSize: 10))]),
