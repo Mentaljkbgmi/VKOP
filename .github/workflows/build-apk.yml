@@ -654,11 +654,13 @@ jobs:
                 final controller = overlayPlayers[layer.path];
                 if (controller == null || !controller.value.isInitialized) continue;
                 final offset = at - layer.start;
-                if (offset < 0 || offset > layer.duration) { await controller.pause(); continue; }
-                try {
-                  await controller.seekTo(Duration(milliseconds: ((offset % layer.duration) * 1000).round()));
-                  await controller.play();
-                } catch (_) {}
+                if (offset < 0 || offset >= layer.duration) { if (controller.value.isPlaying) await controller.pause(); continue; }
+                if (!controller.value.isPlaying) {
+                  try {
+                    await controller.seekTo(Duration(milliseconds: ((offset % layer.duration) * 1000).round()));
+                    await controller.play();
+                  } catch (_) {}
+                }
               }
             }
 
@@ -671,8 +673,10 @@ jobs:
                   if (offset < 0 || track.duration <= 0) { await audio.pause(); continue; }
                   final position = offset % track.duration;
                   await audio.setVolume(track.muted ? 0 : track.volume.clamp(0, 1).toDouble());
-                  await audio.seek(Duration(milliseconds: (position * 1000).round()));
-                  audio.play().catchError((_) {});
+                  if (!audio.playing) {
+                    await audio.seek(Duration(milliseconds: (position * 1000).round()));
+                    audio.play().catchError((_) {});
+                  }
                 } catch (_) {}
               }
             }
@@ -765,6 +769,7 @@ jobs:
                   if (!mounted || token != sequenceToken || !playingSequence) { timer.cancel(); return; }
                   setState(() => playhead = (playhead + (.1 * item.speed)).clamp(0, item.duration).toDouble());
                   applyKeyframes();
+                  if (timer.tick % 5 == 0) { startAudioMix(); startOverlayMix(); }
                   if (playhead >= item.duration) { timer.cancel(); playAt(index + 1); }
                 });
                 return;
@@ -788,6 +793,7 @@ jobs:
                     }
                   }
                   applyKeyframes();
+                  if (timer.tick % 5 == 0) { startAudioMix(); startOverlayMix(); }
                   if (mounted) setState(() => playhead = relative);
                   if (pos >= item.trimEnd) { timer.cancel(); playAt(index + 1); }
                 });
