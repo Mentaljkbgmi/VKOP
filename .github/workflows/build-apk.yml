@@ -816,10 +816,10 @@ jobs:
             List<double> get previewColorMatrix {
               final s = saturation;
               final c = contrast;
-              final b = brightness * 255;
+              final b = (brightness + exposure * .5) * 255;
               const r = .213, g = .715, bl = .072;
               final sr = (1 - s) * r, sg = (1 - s) * g, sb = (1 - s) * bl;
-              final warm = filter == 'Warm' ? 1.08 : 1.0;
+              final warm = (filter == 'Warm' ? 1.08 : 1.0) + temperature * .001;\n              final tintPreview = tint * .0008;
               final mono = filter == 'B&W' ? 0.0 : 1.0;
               final sat = s * mono;
               final rr = (1 - sat) * r, gg = (1 - sat) * g, bb = (1 - sat) * bl;
@@ -1273,7 +1273,8 @@ jobs:
                 filters.add('color=c=' + canvasColor + ':s=' + width.toString() + 'x' + height.toString() +
                   ':r=' + exportFps.toString() + ':d=' + projectDuration.toStringAsFixed(3) + '[vkop_canvas]');
                 filters.add('[vkop_canvas][base0]overlay=shortest=1:format=auto[base_composited]');
-                var previous = 'base_composited';
+                filters.add('[base_composited]split=2[vkop_original][vkop_grade_source]');
+                var previous = 'vkop_grade_source';
 
                 // CapCut-style basic grading and tone controls.
                 final basicLabel = 'vkop_basic_grade';
@@ -1364,6 +1365,21 @@ jobs:
                   filters.add('[' + previous + ']tmix=frames=' + frames.toString() + ':weights=' +
                     "'" + List.filled(frames, '1').join(' ') + "'" + '[' + blur + ']');
                   previous = blur;
+                }
+                // Mix the graded adjustment layer over the untouched image, with selectable mask and intensity.
+                if (adjustmentOpacity < .999 || adjustmentMask != 'None') {
+                  final opacity = adjustmentOpacity.clamp(0.0, 1.0).toStringAsFixed(4);
+                  var maskExpression = '1';
+                  if (adjustmentMask == 'Split') maskExpression = 'lt(X,W/2)';
+                  if (adjustmentMask == 'Mirror') maskExpression = 'gte(X,W/2)';
+                  if (adjustmentMask == 'Circle') maskExpression = 'lte((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2),pow(min(W,H)*0.38,2))';
+                  if (adjustmentMask == 'Rectangle') maskExpression = 'between(X,W*0.2,W*0.8)*between(Y,H*0.2,H*0.8)';
+                  if (adjustmentMask == 'Heart') maskExpression = 'lte(pow(X-W/2,2)/pow(W*0.32,2)+pow(Y-H*0.48,2)/pow(H*0.36,2),1)';
+                  if (adjustmentMask == 'Star') maskExpression = 'lt(abs(X-W/2)+abs(Y-H/2),min(W,H)*0.48)';
+                  final mixLabel = 'vkop_adjustment_layer_mix';
+                  final blendExpression = 'if(' + maskExpression + ',A*(1-' + opacity + ')+B*' + opacity + ',A)';
+                  filters.add('[vkop_original][' + previous + ']blend=all_expr=' + "'" + blendExpression + "'" + '[' + mixLabel + ']');
+                  previous = mixLabel;
                 }
                 // Render clip entrance and exit animation on the complete composed timeline.
                 if (animationPreset == 'Fade In' || animationPreset == 'Fade Out') {
