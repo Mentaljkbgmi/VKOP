@@ -494,6 +494,7 @@ jobs:
             bool _showVerticalCenterGuide = false;
             bool _showHorizontalCenterGuide = false;
             Timer? sequenceTimer;
+            Timer? timelineSeekTimer;
             String activeTool = 'Home';
             String cropRatio = 'Original';
             String filter = 'None';
@@ -671,8 +672,10 @@ jobs:
 
             Future<void> playAll() async {
               if (clips.isEmpty) return;
+              final startIndex = selectedIndex.clamp(0, clips.length - 1).toInt();
+              final startSource = playhead;
               playingSequence = true;
-              await playAt(selectedIndex.clamp(0, clips.length - 1).toInt());
+              await playAt(startIndex, startSourcePosition: startSource);
               await syncTimelineLayers();
             }
 
@@ -799,18 +802,20 @@ jobs:
                 toast('${added.length} audio track(s) added. Adjust volume below and press Play to preview the mix.');
               } catch (e) { toast('Could not add audio: $e'); }
             }
-            Future<void> playAt(int index) async {
+            Future<void> playAt(int index, {double? startSourcePosition}) async {
               if (!playingSequence || !mounted) return;
               sequenceTimer?.cancel(); final token = ++sequenceToken;
               if (index >= clips.length) { playingSequence = false; for (final a in audioPlayers.values) { a.pause(); } for (final v in overlayPlayers.values) { v.pause(); } if (mounted) setState(() {}); return; }
               final old = player; player = null; if (old != null) await old.dispose();
               if (!mounted || token != sequenceToken || !playingSequence) return;
-              final item = clips[index]; setState(() { selectedIndex = index; loading = item.isVideo; playhead = 0; });
+              final item = clips[index];
+              final startAt = (startSourcePosition ?? 0).clamp(0.0, item.duration).toDouble();
+              setState(() { selectedIndex = index; loading = item.isVideo; playhead = startAt; });
               if (!item.isVideo) {
                 setState(() => loading = false);
                 sequenceTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
                   if (!mounted || token != sequenceToken || !playingSequence) { timer.cancel(); return; }
-                  setState(() => playhead = (playhead + (.1 * item.speed)).clamp(0, item.duration).toDouble());
+                  setState(() => playhead = (playhead + (.1 * item.speed)).clamp(startAt, item.duration).toDouble());
                   followTimelinePlayhead();
                   applyKeyframes();
                   syncTimelineLayers();
@@ -822,7 +827,7 @@ jobs:
                 final next = VideoPlayerController.file(File(item.path)); await next.initialize();
                 if (!mounted || token != sequenceToken || !playingSequence) { await next.dispose(); return; }
                 item.duration = next.value.duration.inMilliseconds / 1000; if (item.trimEnd <= 0 || item.trimEnd > item.duration) item.trimEnd = item.duration;
-                player = next; await next.setVolume(item.audioMuted ? 0 : item.audioVolume); await next.seekTo(Duration(milliseconds: (item.trimStart * 1000).round())); await next.setPlaybackSpeed(item.speed); await next.play(); await syncTimelineLayers(); setState(() => loading = false);
+                player = next; await next.setVolume(item.audioMuted ? 0 : item.audioVolume); await next.seekTo(Duration(milliseconds: ((item.trimStart + startAt) * 1000).round())); await next.setPlaybackSpeed(item.speed); await next.play(); await syncTimelineLayers(); setState(() => loading = false);
                 var appliedSpeed = item.speed;
                 sequenceTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
                   if (!mounted || token != sequenceToken || !playingSequence) { timer.cancel(); return; }
@@ -1067,10 +1072,11 @@ jobs:
             Future<void> splitSelected() async {
               final item = current; final p = player;
               if (item == null || !item.isVideo || p == null || !p.value.isInitialized) { toast('Select a video and play it to the split point first.'); return; }
-              final cut = p.value.position.inMilliseconds / 1000;
+              final cut = item.trimStart + playhead;
               if (cut <= item.trimStart + .1 || cut >= item.trimEnd - .1) { toast('Move the playhead inside the selected video range first.'); return; }
-              final second = MediaClip(path: item.path, name: '${item.name} (split)', isVideo: true, duration: item.duration)..trimStart = cut..trimEnd = item.trimEnd;
-              setState(() { item.trimEnd = cut; clips.insert(selectedIndex + 1, second); }); toast('Clip split into two timeline segments.');
+              final oldEnd = item.trimEnd;
+              final second = MediaClip(path: item.path, name: '${item.name} (split)', isVideo: true, duration: item.duration)..trimStart = cut..trimEnd = oldEnd;
+              setState(() { item.trimEnd = cut; clips.insert(selectedIndex + 1, second); }); toast('Clip split at ${time(playhead)} into two timeline segments.');
             }
 
             Future<void> extractAudio() async {
@@ -1949,8 +1955,7 @@ jobs:
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (!mounted || !timelineScrollController.hasClients || !playingSequence) return;
                 final position = timelineScrollController.position;
-                final playheadX = 60 + projectTime * timelinePixelsPerSecond;
-                final target = (playheadX - position.viewportDimension * .5)
+                final target = (projectTime * timelinePixelsPerSecond)
                     .clamp(0.0, position.maxScrollExtent).toDouble();
                 timelineScrollController.jumpTo(target);
               });
@@ -1963,6 +1968,7 @@ jobs:
               final frames = totalFrames % fps;
               return '${time(wholeSeconds.toDouble())}:${frames.toString().padLeft(2, '0')}';
             }
+            double get timelineLeadingInset => timelineScrollController.hasClients ? timelineScrollController.position.viewportDimension * .5 : 180.0;
             double get timelineContentWidth => totalTimelineDuration > 0 ? (totalTimelineDuration * timelinePixelsPerSecond).clamp(1.0, 2000000.0).toDouble() : 500.0;
 
             Future<void> seekTimeline(double seconds) async {
@@ -1996,7 +2002,8 @@ jobs:
 
             Widget timelinePanel() {
               final width = timelineContentWidth;
-              final totalWidth = width + 60;
+              final inset = timelineLeadingInset;
+              final totalWidth = width + inset * 2;
               Widget rowLabel(String title, Color color) => Positioned(left: 5, top: 0, bottom: 0, width: 50, child: Align(alignment: Alignment.centerLeft, child: Text(title, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: color))));
               Widget playhead(double height) => Positioned(left: 60 + projectTime * timelinePixelsPerSecond, top: 0, bottom: 0, child: Container(width: 2, color: const Color(0xFFE34B5B)));
               final rulerTicks = <Widget>[];
@@ -2007,7 +2014,7 @@ jobs:
                 final firstFrame = (((scrollOffset - 60).clamp(0.0, width)) / timelinePixelsPerSecond * exportFps).floor();
                 final lastFrame = ((((scrollOffset + viewport - 60).clamp(0.0, width)) / timelinePixelsPerSecond * exportFps).ceil() + 1);
                 for (var frame = firstFrame; frame <= lastFrame && frame - firstFrame < 1000; frame++) {
-                  final x = 60 + frame * pixelsPerFrame;
+                  final x = inset + frame * pixelsPerFrame;
                   final major = frame % exportFps == 0;
                   rulerTicks.add(Positioned(left: x, top: major ? 1 : 8, child: Container(width: 1, height: major ? 12 : 5, color: major ? const Color(0xFF77717F) : const Color(0xFFB8B3C2))));
                   if (major) {
@@ -2020,7 +2027,7 @@ jobs:
               } else {
                 final secondCount = (width / timelinePixelsPerSecond).ceil() + 1;
                 for (var second = 0; second < secondCount; second++) {
-                  final x = 60 + second * timelinePixelsPerSecond;
+                  final x = inset + second * timelinePixelsPerSecond;
                   rulerTicks.add(Positioned(left: x, top: 1, child: Text('${second}s', style: const TextStyle(fontSize: 8, color: Colors.black54))));
                   for (var sub = 1; sub < 5; sub++) {
                     rulerTicks.add(Positioned(left: x + timelinePixelsPerSecond * sub / 5, top: 10, child: Container(width: 1, height: 4, color: const Color(0xFFB8B3C2))));
@@ -2034,22 +2041,22 @@ jobs:
                 final duration = ((clip.isVideo && clip.trimEnd > clip.trimStart ? clip.trimEnd - clip.trimStart : clip.duration) / clip.speed.clamp(.1, 16)).toDouble();
                 final start = cursor;
                 final blockWidth = (duration * timelinePixelsPerSecond).clamp(42.0, 12000.0).toDouble();
-                mainBlocks.add(Positioned(left: 60 + start * timelinePixelsPerSecond, top: 3, bottom: 3, width: blockWidth, child: InkWell(onTap: () => selectClip(i), child: Container(margin: const EdgeInsets.only(right: 3), padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4), decoration: BoxDecoration(color: selectedIndex == i ? const Color(0xFFE6DCFF) : const Color(0xFFF0EDF8), borderRadius: BorderRadius.circular(5), border: Border.all(color: selectedIndex == i ? purple : const Color(0xFFD8D2E4))), child: Row(children: [Icon(clip.isVideo ? Icons.videocam : Icons.image, size: 12, color: purple), const SizedBox(width: 3), Expanded(child: Text(clip.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 9, color: Colors.black87)))])))));
+                mainBlocks.add(Positioned(left: inset + start * timelinePixelsPerSecond, top: 3, bottom: 3, width: blockWidth, child: InkWell(onTap: () => selectClip(i), child: Container(margin: const EdgeInsets.only(right: 3), padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4), decoration: BoxDecoration(color: selectedIndex == i ? const Color(0xFFE6DCFF) : const Color(0xFFF0EDF8), borderRadius: BorderRadius.circular(5), border: Border.all(color: selectedIndex == i ? purple : const Color(0xFFD8D2E4))), child: Row(children: [Icon(clip.isVideo ? Icons.videocam : Icons.image, size: 12, color: purple), const SizedBox(width: 3), Expanded(child: Text(clip.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 9, color: Colors.black87)))])))));
                 cursor += duration;
               }
               final overlayBlocks = <Widget>[];
               for (var i = 0; i < overlays.length; i++) {
                 final layer = overlays[i];
                 final blockWidth = (layer.duration * timelinePixelsPerSecond).clamp(42.0, 12000.0).toDouble();
-                overlayBlocks.add(Positioned(left: 60 + layer.start * timelinePixelsPerSecond, top: 3, bottom: 3, width: blockWidth, child: GestureDetector(onTap: () => setState(() { selectedOverlay = i; selectedAudio = -1; activeTool = 'Overlay'; }), onHorizontalDragUpdate: (d) => setState(() => layer.start = (layer.start + d.delta.dx / timelinePixelsPerSecond).clamp(0, totalTimelineDuration).toDouble()), child: Container(margin: const EdgeInsets.only(right: 3), padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4), decoration: BoxDecoration(color: selectedOverlay == i ? const Color(0xFFE9E0FF) : const Color(0xFFF3F0FA), borderRadius: BorderRadius.circular(5), border: Border.all(color: selectedOverlay == i ? purple : const Color(0xFFD8D2E4))), child: Row(children: [Icon(layer.kind == 'emoji' ? Icons.emoji_emotions : layer.kind == 'text' ? Icons.title : layer.isVideo ? Icons.videocam : Icons.image, size: 12, color: purple), const SizedBox(width: 3), Expanded(child: Text(layer.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 9)))])))));
+                overlayBlocks.add(Positioned(left: inset + layer.start * timelinePixelsPerSecond, top: 3, bottom: 3, width: blockWidth, child: GestureDetector(onTap: () => setState(() { selectedOverlay = i; selectedAudio = -1; activeTool = 'Overlay'; }), onHorizontalDragUpdate: (d) => setState(() => layer.start = (layer.start + d.delta.dx / timelinePixelsPerSecond).clamp(0, totalTimelineDuration).toDouble()), child: Container(margin: const EdgeInsets.only(right: 3), padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4), decoration: BoxDecoration(color: selectedOverlay == i ? const Color(0xFFE9E0FF) : const Color(0xFFF3F0FA), borderRadius: BorderRadius.circular(5), border: Border.all(color: selectedOverlay == i ? purple : const Color(0xFFD8D2E4))), child: Row(children: [Icon(layer.kind == 'emoji' ? Icons.emoji_emotions : layer.kind == 'text' ? Icons.title : layer.isVideo ? Icons.videocam : Icons.image, size: 12, color: purple), const SizedBox(width: 3), Expanded(child: Text(layer.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 9)))])))));
               }
               final audioBlocks = <Widget>[];
               for (var i = 0; i < audioTracks.length; i++) {
                 final track = audioTracks[i];
                 final blockWidth = (track.duration * timelinePixelsPerSecond).clamp(42.0, 12000.0).toDouble();
-                audioBlocks.add(Positioned(left: 60 + track.start * timelinePixelsPerSecond, top: 3, bottom: 3, width: blockWidth, child: GestureDetector(onTap: () => setState(() { selectedAudio = i; selectedOverlay = -1; activeTool = 'Audio'; }), onHorizontalDragUpdate: (d) => setState(() => track.start = (track.start + d.delta.dx / timelinePixelsPerSecond).clamp(0, totalTimelineDuration).toDouble()), child: Container(margin: const EdgeInsets.only(right: 3), padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4), decoration: BoxDecoration(color: selectedAudio == i ? const Color(0xFFDFF4E6) : const Color(0xFFEAF7EF), borderRadius: BorderRadius.circular(5), border: Border.all(color: selectedAudio == i ? Colors.green : const Color(0xFFCDE6D4))), child: Row(children: [const Icon(Icons.music_note, size: 12, color: Colors.green), const SizedBox(width: 3), Expanded(child: Text(track.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 9)))])))));
+                audioBlocks.add(Positioned(left: inset + track.start * timelinePixelsPerSecond, top: 3, bottom: 3, width: blockWidth, child: GestureDetector(onTap: () => setState(() { selectedAudio = i; selectedOverlay = -1; activeTool = 'Audio'; }), onHorizontalDragUpdate: (d) => setState(() => track.start = (track.start + d.delta.dx / timelinePixelsPerSecond).clamp(0, totalTimelineDuration).toDouble()), child: Container(margin: const EdgeInsets.only(right: 3), padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4), decoration: BoxDecoration(color: selectedAudio == i ? const Color(0xFFDFF4E6) : const Color(0xFFEAF7EF), borderRadius: BorderRadius.circular(5), border: Border.all(color: selectedAudio == i ? Colors.green : const Color(0xFFCDE6D4))), child: Row(children: [const Icon(Icons.music_note, size: 12, color: Colors.green), const SizedBox(width: 3), Expanded(child: Text(track.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 9)))])))));
               }
-              Widget trackRow(String label, Color labelColor, List<Widget> blocks) => SizedBox(width: totalWidth, height: 40, child: Stack(clipBehavior: Clip.none, children: [rowLabel(label, labelColor), Positioned(left: 60, right: 0, top: 0, bottom: 0, child: Container(decoration: BoxDecoration(color: const Color(0xFFFAFAFC), border: Border.all(color: const Color(0xFFE9E7EF)), borderRadius: BorderRadius.circular(5)))), ...blocks]));
+              Widget trackRow(String label, Color labelColor, List<Widget> blocks) => SizedBox(width: totalWidth, height: 40, child: Stack(clipBehavior: Clip.none, children: [rowLabel(label, labelColor), Positioned(left: 0, right: 0, top: 0, bottom: 0, child: Container(decoration: BoxDecoration(color: const Color(0xFFFAFAFC), border: Border.all(color: const Color(0xFFE9E7EF)), borderRadius: BorderRadius.circular(5)))), ...blocks]));
               return Container(
                 height: 168,
                 margin: const EdgeInsets.symmetric(horizontal: 10),
@@ -2082,13 +2089,22 @@ jobs:
                         timelineScrollController.jumpTo(target);
                       });
                     },
+                    child: NotificationListener<ScrollNotification>(
+                    onNotification: (notification) {
+                      if (notification is ScrollEndNotification && !playingSequence && timelineScrollController.hasClients) {
+                        final centerSeconds = ((timelineScrollController.offset + timelineScrollController.position.viewportDimension * .5 - inset) / timelinePixelsPerSecond).clamp(0.0, totalTimelineDuration).toDouble();
+                        timelineSeekTimer?.cancel();
+                        timelineSeekTimer = Timer(const Duration(milliseconds: 45), () => seekTimeline(centerSeconds));
+                      }
+                      return false;
+                    },
                     child: SingleChildScrollView(
                     controller: timelineScrollController,
                     scrollDirection: Axis.horizontal,
                     child: SizedBox(width: totalWidth, child: SingleChildScrollView(
                       scrollDirection: Axis.vertical,
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        SizedBox(width: totalWidth, height: 18, child: GestureDetector(behavior: HitTestBehavior.opaque, onTapDown: (d) => seekTimeline(((d.localPosition.dx - 60) / timelinePixelsPerSecond).clamp(0.0, totalTimelineDuration).toDouble()), child: Stack(children: rulerTicks))),
+                        SizedBox(width: totalWidth, height: 18, child: GestureDetector(behavior: HitTestBehavior.opaque, onTapDown: (d) => seekTimeline(((d.localPosition.dx - inset) / timelinePixelsPerSecond).clamp(0.0, totalTimelineDuration).toDouble()), child: Stack(children: rulerTicks))),
                         trackRow('MAIN', purple, mainBlocks),
                         for (var i = 0; i < overlayBlocks.length; i++)
                           trackRow('LAYER ${i + 1}', const Color(0xFF8A65C9), [overlayBlocks[i]]),
@@ -2096,6 +2112,7 @@ jobs:
                           trackRow('AUDIO ${i + 1}', Colors.green, [audioBlocks[i]]),
                       ]),
                     )),
+                    ),
                     ),
                   ),
                   Positioned(top: 0, bottom: 0, left: 0, right: 0, child: IgnorePointer(child: Center(child: Container(width: 2, decoration: BoxDecoration(color: const Color(0xFFE34B5B), boxShadow: [BoxShadow(color: Colors.white.withOpacity(.9), blurRadius: 1, spreadRadius: .5)]))))),
@@ -2150,16 +2167,18 @@ jobs:
                 case 'Edit':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const Text('EDIT CLIP', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                    if (item != null) ...[
-                      Row(children: [Text('Keyframes: ${item.keyframes.length}', style: const TextStyle(fontSize: 10)), const Spacer(), const Text('Use + on timeline', style: TextStyle(fontSize: 9, color: Colors.black45))]),
-                      Row(children: [const SizedBox(width: 52, child: Text('Scale', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: .5, max: 3, value: item.scale.clamp(.5, 3).toDouble(), onChanged: (v) => setState(() => item.scale = v))), Text('${item.scale.toStringAsFixed(1)}x', style: const TextStyle(fontSize: 10))]),
-                      Row(children: [const SizedBox(width: 52, child: Text('X', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 1, value: item.positionX.clamp(0, 1).toDouble(), onChanged: (v) => setState(() => item.positionX = v))), Text(item.positionX.toStringAsFixed(2), style: const TextStyle(fontSize: 10))]),
-                      Row(children: [const SizedBox(width: 52, child: Text('Y', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 1, value: item.positionY.clamp(0, 1).toDouble(), onChanged: (v) => setState(() => item.positionY = v))), Text(item.positionY.toStringAsFixed(2), style: const TextStyle(fontSize: 10))]),
-                      Row(children: [const SizedBox(width: 52, child: Text('Opacity', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 1, value: item.opacity.clamp(0, 1).toDouble(), onChanged: (v) => setState(() => item.opacity = v))), Text('${(item.opacity * 100).round()}%', style: const TextStyle(fontSize: 10))]),
-                      if (item.isVideo && item.duration > 0) RangeSlider(min: 0, max: item.duration, values: RangeValues(item.trimStart.clamp(0, item.duration).toDouble(), item.trimEnd.clamp(0, item.duration).toDouble()), onChanged: (v) { if (v.end-v.start > .1) setState(() { item.trimStart = v.start; item.trimEnd = v.end; }); }),
-                      if (item.isVideo) Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('IN ${time(item.trimStart)}', style: const TextStyle(fontSize: 10)), Text('OUT ${time(item.trimEnd)}', style: const TextStyle(fontSize: 10))]),
-                    ],
-                    Wrap(spacing: 5, children: [chip('Split', Icons.content_cut, splitSelected), chip('Duplicate', Icons.copy, duplicateSelected), chip('Delete', Icons.delete_outline, removeSelected), chip('Speed', Icons.speed, () => setState(() => activeTool = 'Speed')), chip('Animation', Icons.animation, () => setState(() => activeTool = 'Animation')), chip('Style', Icons.style, () => setState(() => activeTool = 'Style')), chip('Mask', Icons.crop_free, () => setState(() => activeTool = 'Mask')), chip('Transform', Icons.open_with, () => setState(() => activeTool = 'Transform')), chip('Canvas', Icons.crop, () => setState(() => activeTool = 'Aspect Ratio'))])
+                    if (item != null) Text('Keyframes: ${item.keyframes.length}  •  Add with + on timeline', style: const TextStyle(fontSize: 10, color: Colors.black54)),
+                    Wrap(spacing: 6, runSpacing: 4, children: [
+                      chip('Split', Icons.content_cut, () => setState(() => activeTool = 'Split')),
+                      chip('Trim', Icons.tune, () => setState(() => activeTool = 'Trim')),
+                      chip('Speed', Icons.speed, () => setState(() => activeTool = 'Speed')),
+                      chip('Animation', Icons.animation, () => setState(() => activeTool = 'Animation')),
+                      chip('Style', Icons.style, () => setState(() => activeTool = 'Style')),
+                      chip('Mask', Icons.crop_free, () => setState(() => activeTool = 'Mask')),
+                      chip('Transform', Icons.open_with, () => setState(() => activeTool = 'Transform')),
+                      chip('Canvas', Icons.crop, () => setState(() => activeTool = 'Aspect Ratio')),
+                      chip('Duplicate', Icons.copy, duplicateSelected), chip('Delete', Icons.delete_outline, removeSelected),
+                    ])
                   ]);
                 case 'Audio':
                   final audio = currentAudio;
@@ -2338,12 +2357,28 @@ jobs:
                     SwitchListTile(contentPadding: EdgeInsets.zero, dense: true, title: const Text('Reduce background noise', style: TextStyle(fontSize: 11)), value: noiseReductionEnabled, onChanged: (v) => setState(() => noiseReductionEnabled = v)),
                     const Text('Noise reduction is applied to original clip audio during export.', style: TextStyle(fontSize: 10, color: Colors.black54))
                   ]);
+                case 'Split':
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('SPLIT AT ${frameTimecode(projectTime)}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                    const Text('Pause or move the centre playhead to the cut point.', style: TextStyle(fontSize: 10, color: Colors.black54)),
+                    ElevatedButton.icon(onPressed: splitSelected, icon: const Icon(Icons.content_cut, size: 16), label: const Text('Split at playhead')),
+                  ]);
+                case 'Trim':
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    if (item != null && item.isVideo && item.duration > 0) ...[
+                      RangeSlider(min: 0, max: item.duration, values: RangeValues(item.trimStart.clamp(0, item.duration).toDouble(), item.trimEnd.clamp(0, item.duration).toDouble()), onChanged: (v) { if (v.end-v.start > .1) setState(() { item.trimStart = v.start; item.trimEnd = v.end; }); }),
+                      Text('IN ${time(item.trimStart)}     OUT ${time(item.trimEnd)}', style: const TextStyle(fontSize: 10)),
+                    ] else const Text('Select a video clip to trim.', style: TextStyle(fontSize: 10)),
+                  ]);
                 case 'Transform':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const Text('TRANSFORM', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                     if (item != null) ...[
-                      Row(children: [const Text('Scale', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: .1, max: 5, value: item.scale.clamp(.1, 5).toDouble(), onChanged: (v) => setState(() => item.scale = v))), Text('${item.scale.toStringAsFixed(2)}x', style: const TextStyle(fontSize: 10))]),
-                      Row(children: [const Text('Rotate', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: -3.14, max: 3.14, value: item.rotation.clamp(-3.14, 3.14).toDouble(), onChanged: (v) => setState(() => item.rotation = v))), Text('${(item.rotation * 180 / 3.141592653589793).toStringAsFixed(1)}°', style: const TextStyle(fontSize: 10))]),
+                      Row(children: [const SizedBox(width: 42, child: Text('Scale', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: .1, max: 5, value: item.scale.clamp(.1, 5).toDouble(), onChanged: (v) => setState(() => item.scale = v))), Text('${item.scale.toStringAsFixed(2)}x', style: const TextStyle(fontSize: 10))]),
+                      Row(children: [const SizedBox(width: 42, child: Text('X', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 1, value: item.positionX.clamp(0, 1).toDouble(), onChanged: (v) => setState(() => item.positionX = v))), Text(item.positionX.toStringAsFixed(2), style: const TextStyle(fontSize: 10))]),
+                      Row(children: [const SizedBox(width: 42, child: Text('Y', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 1, value: item.positionY.clamp(0, 1).toDouble(), onChanged: (v) => setState(() => item.positionY = v))), Text(item.positionY.toStringAsFixed(2), style: const TextStyle(fontSize: 10))]),
+                      Row(children: [const SizedBox(width: 42, child: Text('Rotate', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: -3.14, max: 3.14, value: item.rotation.clamp(-3.14, 3.14).toDouble(), onChanged: (v) => setState(() => item.rotation = v))), Text('${(item.rotation * 180 / 3.141592653589793).toStringAsFixed(1)}°', style: const TextStyle(fontSize: 10))]),
+                      Row(children: [const SizedBox(width: 42, child: Text('Opacity', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 1, value: item.opacity.clamp(0, 1).toDouble(), onChanged: (v) => setState(() => item.opacity = v))), Text('${(item.opacity * 100).round()}%', style: const TextStyle(fontSize: 10))]),
                     ]
                   ]);
                 case 'Text':
