@@ -231,6 +231,7 @@ jobs:
           import 'package:just_audio/just_audio.dart';
           import 'package:audio_session/audio_session.dart';
           import 'dart:typed_data';
+          import 'dart:ui' as ui;
           import 'package:path_provider/path_provider.dart';
 
           void main() => runApp(const VKOPApp());
@@ -1199,6 +1200,24 @@ jobs:
                   .replaceAll(']', '\\]');
             }
 
+            Future<String> renderEmojiPng(String emoji) async {
+              final recorder = ui.PictureRecorder();
+              final canvas = ui.Canvas(recorder);
+              final painter = TextPainter(text: TextSpan(text: emoji, style: const TextStyle(fontSize: 360)), textDirection: TextDirection.ltr, textAlign: TextAlign.center);
+              painter.layout(maxWidth: 500);
+              painter.paint(canvas, Offset((512 - painter.width) / 2, (512 - painter.height) / 2));
+              final picture = recorder.endRecording();
+              final image = await picture.toImage(512, 512);
+              final data = await image.toByteData(format: ui.ImageByteFormat.png);
+              if (data == null) throw StateError('Could not render emoji layer.');
+              final dir = await getTemporaryDirectory();
+              final file = File('${dir.path}/vkop_emoji_${DateTime.now().microsecondsSinceEpoch}.png');
+              await file.writeAsBytes(data.buffer.asUint8List(), flush: true);
+              image.dispose();
+              picture.dispose();
+              return file.path;
+            }
+
             Future<void> exportProject() async {
               if (exporting) return;
               if (clips.isEmpty) { toast('Add a main video or photo first.'); return; }
@@ -1244,7 +1263,20 @@ jobs:
                     args.addAll(['-loop', '1', '-t', sourceDuration.toStringAsFixed(3), '-i', c.path]);
                   }
                 }
-                for (final o in overlays.where((layer) => layer.kind != 'emoji')) {
+                final exportOverlays = <OverlayClip>[];
+                for (final layer in overlays) {
+                  if (layer.kind == 'emoji') {
+                    final emojiPath = await renderEmojiPng(layer.content);
+                    temporaryAudioFiles.add(File(emojiPath));
+                    exportOverlays.add(OverlayClip(path: emojiPath, name: layer.name, isVideo: false)
+                      ..start = layer.start ..duration = layer.duration ..widthFactor = layer.widthFactor
+                      ..centerX = layer.centerX ..centerY = layer.centerY ..rotation = layer.rotation
+                      ..opacity = layer.opacity ..keyframes.addAll(layer.keyframes));
+                  } else {
+                    exportOverlays.add(layer);
+                  }
+                }
+                for (final o in exportOverlays) {
                   if (o.isVideo || o.path.toLowerCase().endsWith('.gif')) {
                     args.addAll(['-stream_loop', '-1', '-i', o.path]);
                   } else {
@@ -1483,7 +1515,6 @@ jobs:
                   filters.add('[' + previous + ']' + fadeFilter + '[' + fadeLabel + ']');
                   previous = fadeLabel;
                 }
-                final exportOverlays = overlays.where((layer) => layer.kind != 'emoji').toList();
                 for (var j = 0; j < exportOverlays.length; j++) {
                   final o = exportOverlays[j];
                   final inputIndex = clips.length + j;
