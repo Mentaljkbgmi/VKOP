@@ -1367,7 +1367,7 @@ jobs:
                   final boldFont = textBold && selectedTextFont == 'Roboto' ? '/system/fonts/Roboto-Bold.ttf' : textFontFile;
                   filters.add('[' + previous + ']drawtext=fontfile=' + boldFont + ':text=' +
                     "'" + safeText + "'" + ':fontcolor=' + textColor + ':fontsize=' + textSizeExpression +
-                    ':x=' + textX + ':y=' + textY + ":alpha='" + textAlpha + "':shadowcolor=black@0.8:shadowx=2:shadowy=2[' + textOutput + ']');
+                    ':x=' + textX + ':y=' + textY + ':alpha=' + "'" + textAlpha + "'" + ':shadowcolor=black@0.8:shadowx=2:shadowy=2[' + textOutput + ']');
                   previous = textOutput;
                 }
                 if (selectedSticker.isNotEmpty) {
