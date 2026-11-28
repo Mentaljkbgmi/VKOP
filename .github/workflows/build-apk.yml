@@ -464,6 +464,39 @@ jobs:
             double brightness = 0;
             double contrast = 1;
             double saturation = 1;
+            String adjustmentTab = 'Basic';
+            String selectedHslColor = 'Red';
+            final List<double> hslHue = List<double>.filled(8, 0);
+            final List<double> hslSaturation = List<double>.filled(8, 0);
+            final List<double> hslLightness = List<double>.filled(8, 0);
+            double temperature = 0;
+            double tint = 0;
+            double exposure = 0;
+            double highlights = 0;
+            double shadows = 0;
+            double whites = 0;
+            double blacks = 0;
+            double brilliance = 0;
+            double sharpen = 0;
+            double clarity = 0;
+            double grain = 0;
+            double fadeAmount = 0;
+            double vignette = 0;
+            String curvesPreset = 'Linear';
+            String curvesChannel = 'RGB';
+            double shadowWheelR = 0;
+            double shadowWheelG = 0;
+            double shadowWheelB = 0;
+            double midWheelR = 0;
+            double midWheelG = 0;
+            double midWheelB = 0;
+            double highWheelR = 0;
+            double highWheelG = 0;
+            double highWheelB = 0;
+            double wheelOffset = 0;
+            double adjustmentOpacity = 1;
+            String adjustmentMask = 'None';
+            String customLutPath = '';
             String backgroundColorName = 'Black';
             String maskShape = 'None';
             String animationPreset = 'None';
@@ -706,7 +739,78 @@ jobs:
             }
 
             void resetAdjustments() {
-              setState(() { brightness = 0; contrast = 1; saturation = 1; filter = 'None'; });
+              setState(() {
+                brightness = 0; contrast = 1; saturation = 1; filter = 'None';
+                temperature = 0; tint = 0; exposure = 0; highlights = 0; shadows = 0;
+                whites = 0; blacks = 0; brilliance = 0; sharpen = 0; clarity = 0;
+                grain = 0; fadeAmount = 0; vignette = 0;
+                for (var i = 0; i < 8; i++) { hslHue[i] = 0; hslSaturation[i] = 0; hslLightness[i] = 0; }
+                shadowWheelR = 0; shadowWheelG = 0; shadowWheelB = 0;
+                midWheelR = 0; midWheelG = 0; midWheelB = 0;
+                highWheelR = 0; highWheelG = 0; highWheelB = 0; wheelOffset = 0;
+                adjustmentOpacity = 1; adjustmentMask = 'None'; curvesPreset = 'Linear'; curvesChannel = 'RGB';
+              });
+            }
+
+            static const hslColorNames = <String>['Red','Orange','Yellow','Green','Cyan','Blue','Purple','Magenta'];
+
+            Widget adjustmentSlider(String label, double value, double min, double max, ValueChanged<double> changed) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(children: [
+                  SizedBox(width: 91, child: Text(label, style: const TextStyle(fontSize: 10, color: Color(0xFF41414A)))),
+                  Expanded(child: Slider(min: min, max: max, value: value.clamp(min, max).toDouble(), onChanged: changed)),
+                  SizedBox(width: 43, child: Text(value.toStringAsFixed(0), textAlign: TextAlign.end, style: const TextStyle(fontSize: 10, fontFeatures: [FontFeature.tabularFigures()]))),
+                ]),
+              );
+            }
+
+            Future<void> importCubeLut() async {
+              try {
+                final result = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: ['cube']);
+                if (result == null || result.files.isEmpty || result.files.first.path == null) return;
+                setState(() => customLutPath = result.files.first.path!);
+                toast('Custom .cube LUT selected. It will be applied on export.');
+              } catch (e) { toast('Could not import LUT: ' + e.toString()); }
+            }
+
+            Future<String?> buildHslLutFile() async {
+              final changed = List.generate(8, (i) => hslHue[i].abs() + hslSaturation[i].abs() + hslLightness[i].abs() > .01).any((v) => v);
+              if (!changed) return null;
+              const size = 17;
+              final lines = <String>['TITLE "VKOP HSL Adjustment"', 'LUT_3D_SIZE 17', 'DOMAIN_MIN 0.0 0.0 0.0', 'DOMAIN_MAX 1.0 1.0 1.0'];
+              const centers = [0.0, 30.0, 60.0, 120.0, 180.0, 240.0, 275.0, 320.0];
+              for (var b = 0; b < size; b++) {
+                for (var g = 0; g < size; g++) {
+                  for (var r = 0; r < size; r++) {
+                    final color = Color.fromARGB(255, (r * 255 / (size - 1)).round(), (g * 255 / (size - 1)).round(), (b * 255 / (size - 1)).round());
+                    final hsl = HSLColor.fromColor(color);
+                    var hueShift = 0.0; var satShift = 0.0; var lightShift = 0.0; var totalWeight = 0.0;
+                    for (var i = 0; i < 8; i++) {
+                      var distance = (hsl.hue - centers[i]).abs();
+                      if (distance > 180) distance = 360 - distance;
+                      final weight = (1 - distance / 32).clamp(0.0, 1.0).toDouble();
+                      hueShift += hslHue[i] * weight;
+                      satShift += hslSaturation[i] * weight;
+                      lightShift += hslLightness[i] * weight;
+                      totalWeight += weight;
+                    }
+                    if (totalWeight > 0) {
+                      final adjusted = HSLColor.fromAHSL(1,
+                        (hsl.hue + hueShift / totalWeight + 360) % 360,
+                        (hsl.saturation * (1 + satShift / totalWeight / 100)).clamp(0.0, 1.0).toDouble(),
+                        (hsl.lightness + lightShift / totalWeight / 100).clamp(0.0, 1.0).toDouble()).toColor();
+                      lines.add((adjusted.red / 255).toStringAsFixed(6) + ' ' + (adjusted.green / 255).toStringAsFixed(6) + ' ' + (adjusted.blue / 255).toStringAsFixed(6));
+                    } else {
+                      lines.add((r / (size - 1)).toStringAsFixed(6) + ' ' + (g / (size - 1)).toStringAsFixed(6) + ' ' + (b / (size - 1)).toStringAsFixed(6));
+                    }
+                  }
+                }
+              }
+              final dir = await getTemporaryDirectory();
+              final file = File(dir.path + '/vkop_hsl_adjustment.cube');
+              await file.writeAsString(lines.join('\\n'));
+              return file.path;
             }
 
             List<double> get previewColorMatrix {
@@ -1171,13 +1275,85 @@ jobs:
                 filters.add('[vkop_canvas][base0]overlay=shortest=1:format=auto[base_composited]');
                 var previous = 'base_composited';
 
+                // CapCut-style basic grading and tone controls.
+                final basicLabel = 'vkop_basic_grade';
+                final eqBrightness = (brightness + exposure * 0.5 + brilliance * 0.002).clamp(-1.0, 1.0);
+                final eqContrast = (contrast + (highlights.abs() + shadows.abs()) * 0.0005).clamp(0.0, 3.0);
+                final eqSaturation = (filter == 'B&W' ? 0.0 : saturation).clamp(0.0, 3.0);
+                filters.add('[' + previous + ']eq=brightness=' + eqBrightness.toStringAsFixed(4) +
+                  ':contrast=' + eqContrast.toStringAsFixed(4) + ':saturation=' + eqSaturation.toStringAsFixed(4) +
+                  ':gamma=' + (1.0 - brilliance * 0.002).clamp(0.5, 1.5).toStringAsFixed(4) + '[' + basicLabel + ']');
+                previous = basicLabel;
+                if (temperature.abs() > .1 || tint.abs() > .1 || shadowWheelR.abs() + shadowWheelG.abs() + shadowWheelB.abs() +
+                    midWheelR.abs() + midWheelG.abs() + midWheelB.abs() + highWheelR.abs() + highWheelG.abs() + highWheelB.abs() > .1) {
+                  final wheel = 'vkop_color_balance';
+                  final rs = (temperature * .0008 + shadowWheelR * .001 + midWheelR * .0007 + highWheelR * .001).clamp(-.5, .5);
+                  final gs = (tint * .0008 + shadowWheelG * .001 + midWheelG * .0007 + highWheelG * .001).clamp(-.5, .5);
+                  final bs = (-temperature * .0008 + shadowWheelB * .001 + midWheelB * .0007 + highWheelB * .001).clamp(-.5, .5);
+                  filters.add('[' + previous + ']colorbalance=rs=' + rs.toStringAsFixed(4) + ':gs=' + gs.toStringAsFixed(4) +
+                    ':bs=' + bs.toStringAsFixed(4) + ':rm=' + (midWheelR * .001).toStringAsFixed(4) +
+                    ':gm=' + (midWheelG * .001).toStringAsFixed(4) + ':bm=' + (midWheelB * .001).toStringAsFixed(4) +
+                    ':rh=' + (highWheelR * .001).toStringAsFixed(4) + ':gh=' + (highWheelG * .001).toStringAsFixed(4) +
+                    ':bh=' + (highWheelB * .001).toStringAsFixed(4) + ':pl=1[' + wheel + ']');
+                  previous = wheel;
+                }
+                if (highlights.abs() + shadows.abs() + whites.abs() + blacks.abs() > .1) {
+                  final tone = 'vkop_tone';
+                  final blackPoint = (blacks * -0.0015).clamp(-.15, .15);
+                  final whitePoint = (1.0 - whites * .0015).clamp(.75, 1.0);
+                  filters.add('[' + previous + ']colorlevels=romin=' + blackPoint.toStringAsFixed(4) +
+                    ':gomin=' + blackPoint.toStringAsFixed(4) + ':bomin=' + blackPoint.toStringAsFixed(4) +
+                    ':romax=' + whitePoint.toStringAsFixed(4) + ':gomax=' + whitePoint.toStringAsFixed(4) +
+                    ':bomax=' + whitePoint.toStringAsFixed(4) + '[' + tone + ']');
+                  previous = tone;
+                }
+                if (curvesPreset != 'Linear') {
+                  final curve = 'vkop_curve';
+                  final channel = curvesChannel == 'RGB' ? 'all' : curvesChannel.toLowerCase();
+                  final points = curvesPreset == 'S-Curve' ? '0/0 0.25/0.18 0.5/0.5 0.75/0.82 1/1' :
+                    curvesPreset == 'Strong Contrast' ? '0/0 0.25/0.12 0.5/0.5 0.75/0.9 1/1' :
+                    curvesPreset == 'Matte' ? '0/0.08 0.25/0.28 0.5/0.55 0.75/0.8 1/0.94' :
+                    curvesPreset == 'Fade' ? '0/0.06 0.25/0.28 0.5/0.53 0.75/0.8 1/0.96' :
+                    curvesPreset == 'Brighten' ? '0/0 0.25/0.32 0.5/0.62 0.75/0.86 1/1' : '0/0 0.25/0.16 0.5/0.38 0.75/0.68 1/0.92';
+                  filters.add('[' + previous + ']curves=' + channel + '=' + "'" + points + "'" + '[' + curve + ']');
+                  previous = curve;
+                }
+                final hslLut = await buildHslLutFile();
+                if (hslLut != null) {
+                  final lutLabel = 'vkop_hsl_lut';
+                  filters.add('[' + previous + ']lut3d=file=' + "'" + hslLut.replaceAll("'", "\\\\'") + "'" + '[' + lutLabel + ']');
+                  previous = lutLabel;
+                }
+                if (customLutPath.isNotEmpty) {
+                  final lutLabel = 'vkop_custom_lut';
+                  filters.add('[' + previous + ']lut3d=file=' + "'" + customLutPath.replaceAll("'", "\\\\'") + "'" + '[' + lutLabel + ']');
+                  previous = lutLabel;
+                }
+                if (sharpen > 0.1 || clarity > 0.1) {
+                  final detail = 'vkop_detail';
+                  final amount = (sharpen * .025 + clarity * .012).clamp(0.0, 5.0);
+                  filters.add('[' + previous + ']unsharp=5:5:' + amount.toStringAsFixed(3) + ':5:5:0[' + detail + ']');
+                  previous = detail;
+                }
+                if (grain > .1) {
+                  final grainLabel = 'vkop_grain';
+                  filters.add('[' + previous + ']noise=alls=' + (grain * .35).toStringAsFixed(2) + ':allf=t[' + grainLabel + ']');
+                  previous = grainLabel;
+                }
+                if (fadeAmount > .1) {
+                  final fadeLabel = 'vkop_fade_grade';
+                  filters.add('[' + previous + ']eq=contrast=' + (1 - fadeAmount * .003).clamp(.5, 1.0).toStringAsFixed(3) +
+                    ':brightness=' + (fadeAmount * .001).toStringAsFixed(3) + '[' + fadeLabel + ']');
+                  previous = fadeLabel;
+                }
+                if (vignette > .1) {
+                  final vignetteLabel = 'vkop_vignette';
+                  filters.add('[' + previous + ']vignette=angle=' + (vignette * .007).clamp(0.0, 1.0).toStringAsFixed(3) + '[' + vignetteLabel + ']');
+                  previous = vignetteLabel;
+                }
+
                 // Apply the selected color filter and image adjustments to the complete main track.
-                final adjusted = 'adjusted_base';
-                final effectiveSaturation = filter == 'B&W' ? 0.0 : saturation.clamp(0, 3).toDouble();
-                filters.add('[' + previous + ']eq=brightness=' + brightness.clamp(-1, 1).toStringAsFixed(3) +
-                  ':contrast=' + contrast.clamp(0, 3).toStringAsFixed(3) +
-                  ':saturation=' + effectiveSaturation.toStringAsFixed(3) + '[' + adjusted + ']');
-                previous = adjusted;
+                // Base EQ is included in the grading chain above.
                 if (filter == 'Warm') {
                   filters.add('[' + previous + ']colorbalance=rs=0.08:gs=0.025:bs=-0.08[' + 'warm_base]');
                   previous = 'warm_base';
@@ -1663,11 +1839,76 @@ jobs:
                     const Text('Motion blur is rendered during export using temporal frame blending.', style: TextStyle(fontSize: 10, color: Colors.black54))
                   ]);
                 case 'Adjust':
+                  final hslIndex = hslColorNames.indexOf(selectedHslColor).clamp(0, 7);
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Row(children: [const Expanded(child: Text('IMAGE ADJUSTMENTS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))), TextButton(onPressed: resetAdjustments, child: const Text('Reset'))]),
-                    Row(children: [const SizedBox(width: 75, child: Text('Brightness', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: -1, max: 1, value: brightness, onChanged: (v) => setState(() => brightness = v)))]),
-                    Row(children: [const SizedBox(width: 75, child: Text('Contrast', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 2, value: contrast, onChanged: (v) => setState(() => contrast = v)))]),
-                    Row(children: [const SizedBox(width: 75, child: Text('Saturation', style: TextStyle(fontSize: 10))), Expanded(child: Slider(min: 0, max: 2, value: saturation, onChanged: (v) => setState(() => saturation = v)))]),
+                    Row(children: [
+                      const Expanded(child: Text('COLOR ADJUSTMENT', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                      TextButton(onPressed: resetAdjustments, child: const Text('Reset'))
+                    ]),
+                    SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: ['Basic','HSL','Curves','Wheels','LUT & Layer'].map((tab) =>
+                      Padding(padding: const EdgeInsets.only(right: 5), child: ChoiceChip(
+                        label: Text(tab, style: const TextStyle(fontSize: 10)), selected: adjustmentTab == tab,
+                        onSelected: (_) => setState(() => adjustmentTab = tab), visualDensity: VisualDensity.compact,
+                      ))).toList())),
+                    const SizedBox(height: 8),
+                    if (adjustmentTab == 'Basic') ...[
+                      const Text('COLOR', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: purple)),
+                      adjustmentSlider('Temperature', temperature, -100, 100, (v) => setState(() => temperature = v)),
+                      adjustmentSlider('Tint', tint, -100, 100, (v) => setState(() => tint = v)),
+                      const Text('LIGHTNESS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: purple)),
+                      adjustmentSlider('Exposure', exposure, -2, 2, (v) => setState(() => exposure = v)),
+                      adjustmentSlider('Brightness', brightness, -1, 1, (v) => setState(() => brightness = v)),
+                      adjustmentSlider('Contrast', contrast, 0, 2, (v) => setState(() => contrast = v)),
+                      adjustmentSlider('Highlights', highlights, -100, 100, (v) => setState(() => highlights = v)),
+                      adjustmentSlider('Shadows', shadows, -100, 100, (v) => setState(() => shadows = v)),
+                      adjustmentSlider('Whites', whites, -100, 100, (v) => setState(() => whites = v)),
+                      adjustmentSlider('Blacks', blacks, -100, 100, (v) => setState(() => blacks = v)),
+                      adjustmentSlider('Brilliance', brilliance, -100, 100, (v) => setState(() => brilliance = v)),
+                      const Text('EFFECTS / DETAILS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: purple)),
+                      adjustmentSlider('Sharpen', sharpen, 0, 100, (v) => setState(() => sharpen = v)),
+                      adjustmentSlider('Clarity', clarity, 0, 100, (v) => setState(() => clarity = v)),
+                      adjustmentSlider('Grain', grain, 0, 100, (v) => setState(() => grain = v)),
+                      adjustmentSlider('Fade', fadeAmount, 0, 100, (v) => setState(() => fadeAmount = v)),
+                      adjustmentSlider('Vignette', vignette, 0, 100, (v) => setState(() => vignette = v)),
+                    ] else if (adjustmentTab == 'HSL') ...[
+                      const Text('SELECT A COLOR CHANNEL', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                      Wrap(spacing: 4, runSpacing: 2, children: hslColorNames.map((name) => ChoiceChip(
+                        label: Text(name, style: const TextStyle(fontSize: 10)), selected: selectedHslColor == name,
+                        onSelected: (_) => setState(() => selectedHslColor = name), visualDensity: VisualDensity.compact,
+                      )).toList()),
+                      adjustmentSlider('Hue', hslHue[hslIndex], -180, 180, (v) => setState(() => hslHue[hslIndex] = v)),
+                      adjustmentSlider('Saturation', hslSaturation[hslIndex], -100, 100, (v) => setState(() => hslSaturation[hslIndex] = v)),
+                      adjustmentSlider('Lightness', hslLightness[hslIndex], -100, 100, (v) => setState(() => hslLightness[hslIndex] = v)),
+                      const Text('HSL channel adjustments are generated as a 3D LUT for export.', style: TextStyle(fontSize: 10, color: Colors.black54)),
+                    ] else if (adjustmentTab == 'Curves') ...[
+                      const Text('TONE CURVE PRESETS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                      DropdownButton<String>(isExpanded: true, value: curvesPreset, items: ['Linear','S-Curve','Strong Contrast','Matte','Fade','Brighten','Darken'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setState(() => curvesPreset = v ?? 'Linear')),
+                      DropdownButton<String>(isExpanded: true, value: curvesChannel, items: ['RGB','Red','Green','Blue'].map((v) => DropdownMenuItem(value: v, child: Text(v + ' channel'))).toList(), onChanged: (v) => setState(() => curvesChannel = v ?? 'RGB')),
+                      const Text('Curve presets render through FFmpeg curves. Channel selection applies to the chosen curve channel.', style: TextStyle(fontSize: 10, color: Colors.black54)),
+                    ] else if (adjustmentTab == 'Wheels') ...[
+                      const Text('SHADOWS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: purple)),
+                      adjustmentSlider('Red', shadowWheelR, -100, 100, (v) => setState(() => shadowWheelR = v)),
+                      adjustmentSlider('Green', shadowWheelG, -100, 100, (v) => setState(() => shadowWheelG = v)),
+                      adjustmentSlider('Blue', shadowWheelB, -100, 100, (v) => setState(() => shadowWheelB = v)),
+                      const Text('MIDTONES', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: purple)),
+                      adjustmentSlider('Red', midWheelR, -100, 100, (v) => setState(() => midWheelR = v)),
+                      adjustmentSlider('Green', midWheelG, -100, 100, (v) => setState(() => midWheelG = v)),
+                      adjustmentSlider('Blue', midWheelB, -100, 100, (v) => setState(() => midWheelB = v)),
+                      const Text('HIGHLIGHTS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: purple)),
+                      adjustmentSlider('Red', highWheelR, -100, 100, (v) => setState(() => highWheelR = v)),
+                      adjustmentSlider('Green', highWheelG, -100, 100, (v) => setState(() => highWheelG = v)),
+                      adjustmentSlider('Blue', highWheelB, -100, 100, (v) => setState(() => highWheelB = v)),
+                      adjustmentSlider('Offset', wheelOffset, -100, 100, (v) => setState(() => wheelOffset = v)),
+                    ] else ...[
+                      const Text('LUT & ADJUSTMENT LAYER', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                      Row(children: [
+                        Expanded(child: Text(customLutPath.isEmpty ? 'No custom .cube LUT selected' : customLutPath.split('/').last, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10))),
+                        TextButton.icon(onPressed: importCubeLut, icon: const Icon(Icons.file_open, size: 16), label: const Text('Import .cube')),
+                      ]),
+                      adjustmentSlider('Intensity', adjustmentOpacity, 0, 1, (v) => setState(() => adjustmentOpacity = v)),
+                      DropdownButton<String>(isExpanded: true, value: adjustmentMask, items: ['None','Split','Mirror','Circle','Rectangle','Heart','Star'].map((v) => DropdownMenuItem(value: v, child: Text('Mask: ' + v))).toList(), onChanged: (v) => setState(() => adjustmentMask = v ?? 'None')),
+                      const Text('LUT is applied during export. Layer intensity and masks are retained as adjustment-layer settings.', style: TextStyle(fontSize: 10, color: Colors.black54)),
+                    ],
                   ]);
                 case 'Background':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
