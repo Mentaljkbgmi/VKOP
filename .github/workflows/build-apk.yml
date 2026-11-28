@@ -494,6 +494,7 @@ jobs:
             int exportFps = 60;
             double speed = 1;
             double playhead = 0;
+            double? originalImageAspect;
             double _gestureScale = 1;
             double _gestureX = .5;
             double _gestureY = .5;
@@ -592,7 +593,7 @@ jobs:
 
             void toast(String value) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(value))); }
             String time(double s) { final n = s.floor(); return '${(n ~/ 60).toString().padLeft(2,'0')}:${(n % 60).toString().padLeft(2,'0')}'; }
-            double get aspect => cropRatio == '9:16' ? 9/16 : cropRatio == '16:9' ? 16/9 : cropRatio == '1:1' ? 1 : (player?.value.isInitialized == true ? player!.value.aspectRatio : 16/9);
+            double get aspect => cropRatio == '9:16' ? 9/16 : cropRatio == '16:9' ? 16/9 : cropRatio == '1:1' ? 1 : (current?.isVideo == true && player?.value.isInitialized == true ? player!.value.aspectRatio : (originalImageAspect ?? 16/9));
 
             double curveSpeedAt(MediaClip item, double sourcePosition) {
               final length = (item.trimEnd - item.trimStart).clamp(.1, 999999).toDouble();
@@ -628,12 +629,24 @@ jobs:
               if (old != null) await old.dispose();
               if (!mounted || token != loadToken) return;
               final item = clips[index];
-              if (!item.isVideo) { item.duration = item.duration <= 0 ? 3 : item.duration; setState(() => loading = false); return; }
+              if (!item.isVideo) {
+                item.duration = item.duration <= 0 ? 3 : item.duration;
+                try {
+                  final codec = await ui.instantiateImageCodec(await File(item.path).readAsBytes());
+                  final frame = await codec.getNextFrame();
+                  originalImageAspect = frame.image.width / frame.image.height;
+                  frame.image.dispose();
+                  codec.dispose();
+                } catch (_) { originalImageAspect = 16 / 9; }
+                if (mounted && token == loadToken) setState(() => loading = false);
+                return;
+              }
               try {
                 final next = VideoPlayerController.file(File(item.path));
                 await next.initialize();
                 if (!mounted || token != loadToken) { await next.dispose(); return; }
                 item.duration = next.value.duration.inMilliseconds / 1000;
+                originalImageAspect = next.value.aspectRatio;
                 if (item.trimEnd <= 0 || item.trimEnd > item.duration) item.trimEnd = item.duration;
                 player = next;
                 await next.setVolume(item.audioMuted ? 0 : item.audioVolume);
