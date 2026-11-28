@@ -467,7 +467,7 @@ jobs:
             final List<OverlayClip> overlays = [];
             final List<AudioClip> audioTracks = [];
             final Map<Object, AudioPlayer> audioPlayers = {};
-            final Map<String, VideoPlayerController> overlayPlayers = {};
+            final Map<Object, VideoPlayerController> overlayPlayers = {};
             final TransformationController previewTransform = TransformationController();
             VideoPlayerController? player;
             int selectedIndex = 0;
@@ -677,7 +677,7 @@ jobs:
 
                 for (final layer in overlays) {
                   if (!layer.isVideo || layer.kind != 'media') continue;
-                  final controller = overlayPlayers[layer.path];
+                  final controller = overlayPlayers[layer.id];
                   if (controller == null || !controller.value.isInitialized) continue;
                   final offset = at - layer.start;
                   if (offset < 0 || offset >= layer.duration) {
@@ -1104,8 +1104,8 @@ jobs:
 
             void addSticker(String emoji) {
               final layer = OverlayClip(path: '', name: 'Sticker $emoji', isVideo: false, kind: 'emoji', content: emoji)
-                ..start = 0
-                ..duration = 3600
+                ..start = projectTime
+                ..duration = (totalTimelineDuration - projectTime).clamp(.5, 3600).toDouble()
                 ..widthFactor = .18;
               setState(() { overlays.add(layer); selectedOverlay = overlays.length - 1; selectedAudio = -1; activeTool = 'Overlay'; });
             }
@@ -1126,7 +1126,7 @@ jobs:
                     try {
                       final c = VideoPlayerController.file(File(layer.path)); await c.initialize();
                       layer.duration = c.value.duration.inMilliseconds / 1000;
-                      await c.setLooping(true); await c.setVolume(0); await c.pause(); overlayPlayers[layer.path] = c;
+                      await c.setLooping(true); await c.setVolume(0); await c.pause(); overlayPlayers[layer.id] = c;
                     } catch (_) { layer.duration = 3; }
                   }
                   added.add(layer);
@@ -1139,7 +1139,7 @@ jobs:
 
             void deleteOverlay() {
               final o = currentOverlay; if (o == null) return;
-              final c = overlayPlayers.remove(o.path); c?.dispose();
+              final c = overlayPlayers.remove(o.id); c?.dispose();
               setState(() { overlays.removeAt(selectedOverlay); selectedOverlay = overlays.isEmpty ? -1 : (selectedOverlay >= overlays.length ? overlays.length - 1 : selectedOverlay); });
             }
 
@@ -1864,7 +1864,7 @@ jobs:
               Widget child;
               if (o.kind == 'emoji') child = SizedBox(width: width, height: width, child: FittedBox(fit: BoxFit.contain, child: Text(o.content, style: const TextStyle(fontSize: 180))));
               else if (o.kind == 'text') child = SizedBox(width: width, child: FittedBox(fit: BoxFit.scaleDown, child: Text(o.content, textAlign: TextAlign.center, style: TextStyle(fontSize: o.textSize * (o.widthFactor / .78), color: o.textColor, fontWeight: o.textBold ? FontWeight.bold : FontWeight.normal, shadows: const [Shadow(color: Colors.black87, blurRadius: 4, offset: Offset(1, 1))]))));
-              else if (o.isVideo && overlayPlayers[o.path]?.value.isInitialized == true) child = VideoPlayer(overlayPlayers[o.path]!);
+              else if (o.isVideo && overlayPlayers[o.id]?.value.isInitialized == true) child = VideoPlayer(overlayPlayers[o.id]!);
               else if (!o.isVideo) child = Image.file(File(o.path), fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image));
               else child = Container(color: Colors.black12, child: const Center(child: Icon(Icons.movie, color: Colors.white, size: 34)));
               return Positioned(left: size.width * o.centerX - width/2, top: size.height * o.centerY - width/2, width: width, child: GestureDetector(
@@ -1918,14 +1918,20 @@ jobs:
                 decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(9)),
                 child: Column(children: [
                   Row(children: [const Text('TIMELINE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: .8)), const Spacer(), Text('${time(totalTimelineDuration)}', style: const TextStyle(fontSize: 9, color: Colors.black54)), IconButton(tooltip: 'Add keyframe', visualDensity: VisualDensity.compact, constraints: const BoxConstraints(minWidth: 30, minHeight: 28), padding: EdgeInsets.zero, onPressed: addKeyframe, icon: const Icon(Icons.add, size: 21, color: purple))]),
-                  Expanded(child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: SizedBox(width: totalWidth, child: Column(children: [
-                    SizedBox(width: totalWidth, height: 18, child: Stack(children: rulerTicks)),
-                    trackRow('MAIN', purple, mainBlocks),
-                    const SizedBox(height: 2),
-                    trackRow('OVERLAY', const Color(0xFF8A65C9), overlayBlocks),
-                    const SizedBox(height: 2),
-                    trackRow('AUDIO', Colors.green, audioBlocks),
-                  ])))),
+                  Expanded(child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(width: totalWidth, child: SingleChildScrollView(
+                      scrollDirection: Axis.vertical,
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        SizedBox(width: totalWidth, height: 18, child: Stack(children: rulerTicks)),
+                        trackRow('MAIN', purple, mainBlocks),
+                        for (var i = 0; i < overlayBlocks.length; i++)
+                          trackRow('LAYER ${i + 1}', const Color(0xFF8A65C9), [overlayBlocks[i]]),
+                        for (var i = 0; i < audioBlocks.length; i++)
+                          trackRow('AUDIO ${i + 1}', Colors.green, [audioBlocks[i]]),
+                      ]),
+                    )),
+                  )),
                 ]),
               );
             }
