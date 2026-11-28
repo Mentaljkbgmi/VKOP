@@ -490,6 +490,7 @@ jobs:
             StreamSubscription<dynamic>? exportProgressSubscription;
             bool extractingAudio = false;
             bool fullscreenPreview = false;
+            bool _showCenterGuides = false;
             Timer? sequenceTimer;
             String activeTool = 'Edit';
             String cropRatio = 'Original';
@@ -1168,14 +1169,16 @@ jobs:
 
             void beginOverlayGesture(ScaleStartDetails d) {
               final o = currentOverlay; if (o == null) return;
-              _gestureScale = o.widthFactor; _gestureX = o.centerX; _gestureY = o.centerY; _gestureRotation = o.rotation; _gestureFocal = d.focalPoint;
+              _gestureScale = o.widthFactor; _gestureX = o.centerX; _gestureY = o.centerY; _gestureRotation = o.rotation; _gestureFocal = d.focalPoint; _showCenterGuides = true;
             }
             void updateOverlayGesture(ScaleUpdateDetails d, Size size) {
               final o = currentOverlay; if (o == null) return;
               setState(() {
                 o.widthFactor = (_gestureScale * d.scale).clamp(.12, .9);
-                o.centerX = (_gestureX + (d.focalPoint.dx - _gestureFocal.dx) / size.width).clamp(0.05, .95);
-                o.centerY = (_gestureY + (d.focalPoint.dy - _gestureFocal.dy) / size.height).clamp(0.05, .95);
+                final rawX = (_gestureX + (d.focalPoint.dx - _gestureFocal.dx) / size.width).clamp(0.05, .95).toDouble();
+                final rawY = (_gestureY + (d.focalPoint.dy - _gestureFocal.dy) / size.height).clamp(0.05, .95).toDouble();
+                o.centerX = (rawX - .5).abs() < .025 ? .5 : rawX;
+                o.centerY = (rawY - .5).abs() < .025 ? .5 : rawY;
                 o.rotation = _gestureRotation + d.rotation;
               });
             }
@@ -1858,16 +1861,20 @@ jobs:
                                       _gestureY = item.positionY;
                                       _gestureRotation = item.rotation;
                                       _gestureFocal = d.focalPoint;
+                                      _showCenterGuides = true;
                                     },
                                     onScaleUpdate: (d) {
                                       if (item == null) return;
                                       setState(() {
                                         item.scale = (_gestureScale * d.scale).clamp(.05, 8.0).toDouble();
-                                        item.positionX = (_gestureX + (d.focalPoint.dx - _gestureFocal.dx) / canvasW).clamp(-1.5, 2.5).toDouble();
-                                        item.positionY = (_gestureY + (d.focalPoint.dy - _gestureFocal.dy) / canvasH).clamp(-1.5, 2.5).toDouble();
+                                        final rawX = (_gestureX + (d.focalPoint.dx - _gestureFocal.dx) / canvasW).clamp(-1.5, 2.5).toDouble();
+                                        final rawY = (_gestureY + (d.focalPoint.dy - _gestureFocal.dy) / canvasH).clamp(-1.5, 2.5).toDouble();
+                                        item.positionX = (rawX - .5).abs() < .025 ? .5 : rawX;
+                                        item.positionY = (rawY - .5).abs() < .025 ? .5 : rawY;
                                         item.rotation = _gestureRotation + d.rotation;
                                       });
                                     },
+                                    onScaleEnd: (_) => setState(() => _showCenterGuides = false),
                                     child: ColorFiltered(colorFilter: ColorFilter.matrix(previewColorMatrix), child: mediaContent),
                                   ),
                                   ),
@@ -1878,6 +1885,11 @@ jobs:
                           for (var i = 0; i < overlays.length; i++)
                             if (projectTime >= overlays[i].start && projectTime <= overlays[i].start + overlays[i].duration)
                               _overlayWidget(overlays[i], i, Size(canvasW, canvasH)),
+                          if (_showCenterGuides) ...[
+                            Positioned(left: canvasW / 2 - .5, top: 0, bottom: 0, child: IgnorePointer(child: Container(width: 1, color: const Color(0xFF42D9FF)))),
+                            Positioned(top: canvasH / 2 - .5, left: 0, right: 0, child: IgnorePointer(child: Container(height: 1, color: const Color(0xFF42D9FF)))),
+                            Positioned(left: canvasW / 2 - 5, top: canvasH / 2 - 5, child: IgnorePointer(child: Container(width: 10, height: 10, decoration: BoxDecoration(border: Border.all(color: const Color(0xFF42D9FF), width: 1.5), shape: BoxShape.circle)))),
+                          ],
                           if (overlayText.isNotEmpty)
                             Positioned(left: 12, right: 12, bottom: 24, child: IgnorePointer(child: Text(overlayText, textAlign: TextAlign.center, style: TextStyle(fontFamily: selectedTextFontFamily, color: selectedTextColor, fontSize: textSize, fontWeight: textBold ? FontWeight.bold : FontWeight.normal, shadows: const [Shadow(color: Colors.black87, blurRadius: 4, offset: Offset(1, 1))])))),
                         ]),
@@ -1917,6 +1929,7 @@ jobs:
                 onTap: () => setState(() { selectedOverlay = index; selectedAudio = -1; activeTool = 'Overlay'; }),
                 onScaleStart: (d) { setState(() { selectedOverlay = index; selectedAudio = -1; activeTool = 'Overlay'; }); beginOverlayGesture(d); },
                 onScaleUpdate: (d) { if (selectedOverlay == index) updateOverlayGesture(d, size); },
+                onScaleEnd: (_) => setState(() => _showCenterGuides = false),
                 child: Transform.rotate(angle: o.rotation, child: Container(
                   decoration: active ? BoxDecoration(border: Border.all(color: purple, width: 2)) : null,
                   child: Opacity(opacity: o.opacity.clamp(0, 1).toDouble(), child: child),
