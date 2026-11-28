@@ -1671,69 +1671,61 @@ jobs:
             }
 
             Widget preview() {
-              final item = current; Widget content;
+              final item = current;
               final originalAspect = player?.value.isInitialized == true ? player!.value.aspectRatio : 16 / 9;
-              if (loading) content = const CircularProgressIndicator();
-              else if (item == null) content = const Text('No clip selected');
-              else if (!item.isVideo) content = Image.file(File(item.path), fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image));
-              else if (player == null || !player!.value.isInitialized) content = const Text('Video preview unavailable');
-              else content = AspectRatio(aspectRatio: originalAspect, child: VideoPlayer(player!));
-              content = ColorFiltered(colorFilter: ColorFilter.matrix(previewColorMatrix), child: content);
+              Widget mediaContent;
+              if (loading) {
+                mediaContent = const Center(child: CircularProgressIndicator());
+              } else if (item == null) {
+                mediaContent = const Center(child: Text('No clip selected', style: TextStyle(color: Colors.white70)));
+              } else if (!item.isVideo) {
+                mediaContent = Image.file(File(item.path), fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white));
+              } else if (player == null || !player!.value.isInitialized) {
+                mediaContent = const Center(child: Text('Video preview unavailable', style: TextStyle(color: Colors.white70)));
+              } else {
+                mediaContent = AspectRatio(aspectRatio: originalAspect, child: VideoPlayer(player!));
+              }
               return LayoutBuilder(builder: (context, constraints) {
-                final size = Size(constraints.maxWidth, constraints.maxHeight);
+                final availableW = constraints.maxWidth;
+                final availableH = constraints.maxHeight;
+                final ratio = aspect;
+                final canvasW = availableW / availableH > ratio ? availableH * ratio : availableW;
+                final canvasH = canvasW / ratio;
                 final clipScale = item?.scale ?? 1.0;
                 final clipOpacity = item?.opacity ?? 1.0;
                 final animationProgress = (playhead / ((item?.duration ?? 1) < 1 ? (item?.duration ?? 1) : 1)).clamp(0.0, 1.0).toDouble();
                 final animationScale = animationPreset == 'Zoom In' ? .75 + .25 * animationProgress : animationPreset == 'Zoom Out' ? 1.25 - .25 * animationProgress : 1.0;
                 final animationOpacity = animationPreset == 'Fade In' ? animationProgress : animationPreset == 'Fade Out' ? 1.0 - animationProgress : 1.0;
-                final clipOffset = Offset(size.width * ((item?.positionX ?? .5) - .5), size.height * ((item?.positionY ?? .5) - .5));
-                return Stack(clipBehavior: Clip.hardEdge, alignment: Alignment.center, children: [
-                  InteractiveViewer(
-                    transformationController: previewTransform,
-                    minScale: 1.0,
-                    maxScale: 5.0,
-                    panEnabled: false,
-                    scaleEnabled: false,
-                    constrained: true,
-                    boundaryMargin: const EdgeInsets.all(80),
-                    clipBehavior: Clip.hardEdge,
+                return Stack(clipBehavior: Clip.hardEdge, children: [
+                  Center(
                     child: SizedBox(
-                      width: size.width,
-                      height: size.height,
-                      child: Center(
-                        child: AspectRatio(
-                          aspectRatio: aspect,
-                          child: ColoredBox(
-                            color: canvasBackground,
-                            child: Center(
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  border: stylePreset == 'Border' ? Border.all(color: purple, width: 2) : null,
-                                  boxShadow: stylePreset == 'Shadow' ? const [BoxShadow(color: Colors.black45, blurRadius: 12, offset: Offset(0, 4))] : const [],
-                                ),
-                                child: ClipRRect(
-                                  borderRadius: stylePreset == 'Rounded' || maskShape == 'Rounded' ? BorderRadius.circular(18) : BorderRadius.zero,
-                                  child: Transform.translate(
-                                    offset: clipOffset,
-                                    child: Transform.rotate(
-                                      angle: item?.rotation ?? 0,
-                                      child: Transform.scale(
-                                        scale: clipScale * animationScale,
-                                        child: Opacity(
-                                          opacity: (clipOpacity * animationOpacity).clamp(0, 1).toDouble(),
-                                          child: ClipPath(
-                                            clipper: maskShape == 'Circle' ? _CircleClipper() : maskShape == 'Oval' ? _OvalClipper() : null,
-                                            child: content,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
+                      width: canvasW,
+                      height: canvasH,
+                      child: ClipRect(
+                        child: Stack(clipBehavior: Clip.hardEdge, children: [
+                          Positioned.fill(child: ColoredBox(color: canvasBackground)),
+                          Positioned.fill(child: Center(child: Transform.translate(
+                            offset: Offset(canvasW * ((item?.positionX ?? .5) - .5), canvasH * ((item?.positionY ?? .5) - .5)),
+                            child: Transform.rotate(
+                              angle: item?.rotation ?? 0,
+                              child: Transform.scale(
+                                scale: clipScale * animationScale,
+                                child: Opacity(
+                                  opacity: (clipOpacity * animationOpacity).clamp(0, 1).toDouble(),
+                                  child: ClipPath(
+                                    clipper: maskShape == 'Circle' ? _CircleClipper() : maskShape == 'Oval' ? _OvalClipper() : null,
+                                    child: ColorFiltered(colorFilter: ColorFilter.matrix(previewColorMatrix), child: mediaContent),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                        ),
+                          ))),
+                          for (var i = 0; i < overlays.length; i++)
+                            if (projectTime >= overlays[i].start && projectTime <= overlays[i].start + overlays[i].duration)
+                              _overlayWidget(overlays[i], i, Size(canvasW, canvasH)),
+                          if (overlayText.isNotEmpty)
+                            Positioned(left: 12, right: 12, bottom: 24, child: IgnorePointer(child: Text(overlayText, textAlign: TextAlign.center, style: TextStyle(fontFamily: selectedTextFontFamily, color: selectedTextColor, fontSize: textSize, fontWeight: textBold ? FontWeight.bold : FontWeight.normal, shadows: const [Shadow(color: Colors.black87, blurRadius: 4, offset: Offset(1, 1))])))),
+                        ]),
                       ),
                     ),
                   ),
@@ -1753,25 +1745,6 @@ jobs:
                       ),
                     ),
                   ),
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: Material(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(20),
-                      child: IconButton(
-                        tooltip: 'Reset preview zoom',
-                        visualDensity: VisualDensity.compact,
-                        constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-                        padding: const EdgeInsets.all(6),
-                        icon: const Icon(Icons.fit_screen, color: Colors.white, size: 18),
-                        onPressed: () => setState(() => previewTransform.value = Matrix4.identity()),
-                      ),
-                    ),
-                  ),
-                  if (overlayText.isNotEmpty) Positioned(left: 12, right: 12, bottom: 30, child: IgnorePointer(child: Text(overlayText, textAlign: TextAlign.center, style: TextStyle(fontFamily: selectedTextFontFamily, color: selectedTextColor, fontSize: textSize, fontWeight: textBold ? FontWeight.bold : FontWeight.normal, shadows: const [Shadow(color: Colors.black87, blurRadius: 4, offset: Offset(1, 1))])))),
-                  if (selectedSticker.isNotEmpty) Positioned(right: 18, top: 18, child: IgnorePointer(child: Text(selectedSticker, style: const TextStyle(fontSize: 42)))),
-                  for (var i = 0; i < overlays.length; i++) if (projectTime >= overlays[i].start && projectTime <= overlays[i].start + overlays[i].duration) _overlayWidget(overlays[i], i, size),
                 ]);
               });
             }
