@@ -1945,7 +1945,7 @@ jobs:
               final frames = totalFrames % fps;
               return '${time(wholeSeconds)}:${frames.toString().padLeft(2, '0')}';
             }
-            double get timelineContentWidth => (totalTimelineDuration * timelinePixelsPerSecond).clamp(500.0, 12000.0).toDouble();
+            double get timelineContentWidth => (totalTimelineDuration * timelinePixelsPerSecond).clamp(500.0, 2000000.0).toDouble();
 
             Future<void> seekTimeline(double seconds) async {
               if (clips.isEmpty) return;
@@ -1982,12 +1982,31 @@ jobs:
               Widget rowLabel(String title, Color color) => Positioned(left: 5, top: 0, bottom: 0, width: 50, child: Align(alignment: Alignment.centerLeft, child: Text(title, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: color))));
               Widget playhead(double height) => Positioned(left: 60 + projectTime * timelinePixelsPerSecond, top: 0, bottom: 0, child: Container(width: 2, color: const Color(0xFFE34B5B)));
               final rulerTicks = <Widget>[];
-              final secondCount = (width / timelinePixelsPerSecond).ceil() + 1;
-              for (var second = 0; second < secondCount; second++) {
-                final x = 60 + second * timelinePixelsPerSecond;
-                rulerTicks.add(Positioned(left: x, top: 1, child: Text('${second}s', style: const TextStyle(fontSize: 8, color: Colors.black54))));
-                for (var sub = 1; sub < 5; sub++) {
-                  rulerTicks.add(Positioned(left: x + timelinePixelsPerSecond * sub / 5, top: 10, child: Container(width: 1, height: sub == 0 ? 7 : 4, color: const Color(0xFFB8B3C2))));
+              final pixelsPerFrame = timelinePixelsPerSecond / exportFps;
+              if (pixelsPerFrame >= 8) {
+                final scrollOffset = timelineScrollController.hasClients ? timelineScrollController.offset : 0.0;
+                final viewport = timelineScrollController.hasClients ? timelineScrollController.position.viewportDimension : 360.0;
+                final firstFrame = (((scrollOffset - 60).clamp(0.0, width)) / timelinePixelsPerSecond * exportFps).floor();
+                final lastFrame = ((((scrollOffset + viewport - 60).clamp(0.0, width)) / timelinePixelsPerSecond * exportFps).ceil() + 1);
+                for (var frame = firstFrame; frame <= lastFrame && frame - firstFrame < 1000; frame++) {
+                  final x = 60 + frame * pixelsPerFrame;
+                  final major = frame % exportFps == 0;
+                  rulerTicks.add(Positioned(left: x, top: major ? 1 : 8, child: Container(width: 1, height: major ? 12 : 5, color: major ? const Color(0xFF77717F) : const Color(0xFFB8B3C2))));
+                  if (major) {
+                    final sec = frame ~/ exportFps;
+                    rulerTicks.add(Positioned(left: x + 2, top: 0, child: Text('${sec}s', style: const TextStyle(fontSize: 8, color: Colors.black54))));
+                  } else if (pixelsPerFrame >= 20) {
+                    rulerTicks.add(Positioned(left: x + 2, top: 0, child: Text('${frame % exportFps}', style: const TextStyle(fontSize: 7, color: Colors.black45))));
+                  }
+                }
+              } else {
+                final secondCount = (width / timelinePixelsPerSecond).ceil() + 1;
+                for (var second = 0; second < secondCount; second++) {
+                  final x = 60 + second * timelinePixelsPerSecond;
+                  rulerTicks.add(Positioned(left: x, top: 1, child: Text('${second}s', style: const TextStyle(fontSize: 8, color: Colors.black54))));
+                  for (var sub = 1; sub < 5; sub++) {
+                    rulerTicks.add(Positioned(left: x + timelinePixelsPerSecond * sub / 5, top: 10, child: Container(width: 1, height: 4, color: const Color(0xFFB8B3C2))));
+                  }
                 }
               }
               final mainBlocks = <Widget>[];
@@ -2029,7 +2048,12 @@ jobs:
                     },
                     onScaleUpdate: (details) {
                       if (details.pointerCount < 2) return;
-                      final nextZoom = (_timelineZoomStart * details.scale).clamp(8.0, 240.0).toDouble();
+                      final viewport = timelineScrollController.hasClients ? timelineScrollController.position.viewportDimension : 360.0;
+                      final fitToPhoneZoom = totalTimelineDuration > 0
+                          ? ((viewport - 60).clamp(120.0, 1000.0) / totalTimelineDuration).clamp(0.5, 55.0).toDouble()
+                          : 8.0;
+                      final frameDetailZoom = (exportFps * 48.0).clamp(1440.0, 5760.0).toDouble();
+                      final nextZoom = (_timelineZoomStart * details.scale).clamp(fitToPhoneZoom, frameDetailZoom).toDouble();
                       final contentX = _timelineScrollStart + _timelineFocalX - 60;
                       setState(() => timelineZoom = nextZoom);
                       WidgetsBinding.instance.addPostFrameCallback((_) {
