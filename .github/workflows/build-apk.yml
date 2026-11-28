@@ -477,6 +477,7 @@ jobs:
             int sequenceToken = 0;
             bool loading = false;
             bool playingSequence = false;
+            bool _syncingTimelineLayers = false;
             bool testingFFmpeg = false;
             bool exporting = false;
             double exportProgress = 0;
@@ -556,7 +557,7 @@ jobs:
             bool showGrid = false;
 
             MediaClip? get current => clips.isEmpty || selectedIndex < 0 || selectedIndex >= clips.length ? null : clips[selectedIndex];
-            double get projectTime => clips.take(selectedIndex < 0 ? 0 : selectedIndex).fold<double>(0, (sum, c) => sum + (c.isVideo ? (c.trimEnd > c.trimStart ? c.trimEnd - c.trimStart : c.duration) : c.duration)) + playhead;
+            double get projectTime => clips.take(selectedIndex < 0 ? 0 : selectedIndex).fold<double>(0, (sum, c) => sum + ((c.isVideo && c.trimEnd > c.trimStart ? c.trimEnd - c.trimStart : c.duration) / c.speed.clamp(.1, 16))) + (playhead / (current?.speed ?? 1).clamp(.1, 16));
             OverlayClip? get currentOverlay => selectedOverlay < 0 || selectedOverlay >= overlays.length ? null : overlays[selectedOverlay];
             AudioClip? get currentAudio => selectedAudio < 0 || selectedAudio >= audioTracks.length ? null : audioTracks[selectedAudio];
 
@@ -648,41 +649,54 @@ jobs:
               if (clips.isEmpty) return;
               playingSequence = true;
               await playAt(selectedIndex.clamp(0, clips.length - 1).toInt());
-              await startAudioMix();
-              await startOverlayMix();
+              await syncTimelineLayers();
             }
 
-            Future<void> startOverlayMix() async {
+            // Keep every audio/video layer locked to the same project clock.
+            // This is deliberately synchronized from the playback timer, not just
+            // started once when the user presses Play.
+            Future<void> syncTimelineLayers() async {
+              if (!playingSequence || _syncingTimelineLayers) return;
+              _syncingTimelineLayers = true;
               final at = projectTime;
-              for (final layer in overlays) {
-                if (!layer.isVideo || layer.kind != 'media') continue;
-                final controller = overlayPlayers[layer.path];
-                if (controller == null || !controller.value.isInitialized) continue;
-                final offset = at - layer.start;
-                if (offset < 0 || offset >= layer.duration) { if (controller.value.isPlaying) await controller.pause(); continue; }
-                if (!controller.value.isPlaying) {
-                  try {
-                    await controller.seekTo(Duration(milliseconds: ((offset % layer.duration) * 1000).round()));
-                    await controller.play();
-                  } catch (_) {}
-                }
-              }
-            }
-
-            Future<void> startAudioMix() async {
-              for (final track in audioTracks) {
-                final audio = audioPlayers[track.id];
-                if (audio == null) continue;
-                try {
-                  final offset = projectTime - track.start;
-                  if (offset < 0 || track.duration <= 0) { await audio.pause(); continue; }
-                  final position = offset % track.duration;
-                  await audio.setVolume(track.muted ? 0 : track.volume.clamp(0, 1).toDouble());
-                  if (!audio.playing) {
-                    await audio.seek(Duration(milliseconds: (position * 1000).round()));
-                    audio.play().catchError((_) {});
+              try {
+                for (final track in audioTracks) {
+                  final audio = audioPlayers[track.id];
+                  if (audio == null) continue;
+                  final offset = at - track.start;
+                  if (track.muted || offset < 0 || offset >= track.duration) {
+                    if (audio.playing) await audio.pause();
+                    continue;
                   }
-                } catch (_) {}
+                  final target = Duration(milliseconds: (offset * 1000).round());
+                  final drift = (audio.position - target).inMilliseconds.abs();
+                  if (drift > 280) await audio.seek(target);
+                  await audio.setVolume(track.volume.clamp(0, 1).toDouble());
+                  if (!audio.playing) audio.play().catchError((_) {});
+                }
+
+                for (final layer in overlays) {
+                  if (!layer.isVideo || layer.kind != 'media') continue;
+                  final controller = overlayPlayers[layer.path];
+                  if (controller == null || !controller.value.isInitialized) continue;
+                  final offset = at - layer.start;
+                  if (offset < 0 || offset >= layer.duration) {
+                    if (controller.value.isPlaying) await controller.pause();
+                    continue;
+                  }
+                  final sourceDuration = controller.value.duration.inMilliseconds;
+                  if (sourceDuration <= 0) continue;
+                  final targetMs = (offset * 1000).round() % sourceDuration;
+                  final drift = (controller.value.position.inMilliseconds - targetMs).abs();
+                  if (drift > 280) {
+                    await controller.seekTo(Duration(milliseconds: targetMs));
+                  }
+                  if (!controller.value.isPlaying) await controller.play();
+                }
+              } catch (_) {
+                // A layer can be removed or disposed while the timeline is playing.
+              } finally {
+                _syncingTimelineLayers = false;
               }
             }
 
@@ -751,7 +765,7 @@ jobs:
                   final audio = AudioPlayer();
                   final duration = await audio.setFilePath(track.path);
                   track.duration = (duration?.inMilliseconds ?? 0) / 1000;
-                  await audio.setLoopMode(LoopMode.one);
+                  await audio.setLoopMode(LoopMode.off);
                   await audio.pause();
                   audioPlayers[track.id] = audio;
                   added.add(track);
@@ -774,7 +788,7 @@ jobs:
                   if (!mounted || token != sequenceToken || !playingSequence) { timer.cancel(); return; }
                   setState(() => playhead = (playhead + (.1 * item.speed)).clamp(0, item.duration).toDouble());
                   applyKeyframes();
-                  if (timer.tick % 5 == 0) { startAudioMix(); startOverlayMix(); }
+                  syncTimelineLayers();
                   if (playhead >= item.duration) { timer.cancel(); playAt(index + 1); }
                 });
                 return;
