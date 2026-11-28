@@ -819,7 +819,8 @@ jobs:
               final b = (brightness + exposure * .5) * 255;
               const r = .213, g = .715, bl = .072;
               final sr = (1 - s) * r, sg = (1 - s) * g, sb = (1 - s) * bl;
-              final warm = (filter == 'Warm' ? 1.08 : 1.0) + temperature * .001;\n              final tintPreview = tint * .0008;
+              final warm = (filter == 'Warm' ? 1.08 : 1.0) + temperature * .001;
+              final tintPreview = tint * .0008;
               final mono = filter == 'B&W' ? 0.0 : 1.0;
               final sat = s * mono;
               final rr = (1 - sat) * r, gg = (1 - sat) * g, bb = (1 - sat) * bl;
