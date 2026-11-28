@@ -1882,6 +1882,35 @@ jobs:
             double get timelinePixelsPerSecond => 55;
             double get timelineContentWidth => (totalTimelineDuration * timelinePixelsPerSecond).clamp(500.0, 12000.0).toDouble();
 
+            Future<void> seekTimeline(double seconds) async {
+              if (clips.isEmpty) return;
+              final target = seconds.clamp(0.0, totalTimelineDuration).toDouble();
+              var offset = 0.0;
+              var index = clips.length - 1;
+              var local = 0.0;
+              for (var i = 0; i < clips.length; i++) {
+                final clip = clips[i];
+                final sourceLength = clip.isVideo && clip.trimEnd > clip.trimStart
+                    ? clip.trimEnd - clip.trimStart : clip.duration;
+                final timelineLength = sourceLength / clip.speed.clamp(.1, 16);
+                if (target <= offset + timelineLength || i == clips.length - 1) {
+                  index = i;
+                  local = (target - offset).clamp(0.0, timelineLength).toDouble();
+                  break;
+                }
+                offset += timelineLength;
+              }
+              await selectClip(index);
+              if (!mounted) return;
+              final clip = current;
+              if (clip == null) return;
+              final sourcePosition = local * clip.speed.clamp(.1, 16);
+              if (clip.isVideo && player?.value.isInitialized == true) {
+                await player!.seekTo(Duration(milliseconds: ((clip.trimStart + sourcePosition) * 1000).round()));
+              }
+              if (mounted) setState(() => playhead = sourcePosition);
+            }
+
             Widget timelinePanel() {
               final width = timelineContentWidth;
               final totalWidth = width + 60;
@@ -1923,7 +1952,7 @@ jobs:
                     child: SizedBox(width: totalWidth, child: SingleChildScrollView(
                       scrollDirection: Axis.vertical,
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        SizedBox(width: totalWidth, height: 18, child: Stack(children: rulerTicks)),
+                        SizedBox(width: totalWidth, height: 18, child: GestureDetector(behavior: HitTestBehavior.opaque, onTapDown: (d) => seekTimeline(((d.localPosition.dx - 60) / timelinePixelsPerSecond).clamp(0.0, totalTimelineDuration).toDouble()), child: Stack(children: rulerTicks))),
                         trackRow('MAIN', purple, mainBlocks),
                         for (var i = 0; i < overlayBlocks.length; i++)
                           trackRow('LAYER ${i + 1}', const Color(0xFF8A65C9), [overlayBlocks[i]]),
