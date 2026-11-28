@@ -1367,7 +1367,7 @@ jobs:
                   previous = blur;
                 }
                 // Mix the graded adjustment layer over the untouched image, with selectable mask and intensity.
-                if (adjustmentOpacity < .999 || adjustmentMask != 'None') {
+                {
                   final opacity = adjustmentOpacity.clamp(0.0, 1.0).toStringAsFixed(4);
                   var maskExpression = '1';
                   if (adjustmentMask == 'Split') maskExpression = 'lt(X,W/2)';
