@@ -468,6 +468,7 @@ jobs:
             final List<AudioClip> audioTracks = [];
             final Map<Object, AudioPlayer> audioPlayers = {};
             final Map<Object, VideoPlayerController> overlayPlayers = {};
+            final Map<String, Future<Uint8List?>> timelineThumbnailCache = {};
             final TransformationController previewTransform = TransformationController();
             final ScrollController timelineScrollController = ScrollController();
             double timelineZoom = 55;
@@ -653,7 +654,7 @@ jobs:
                 return;
               }
               try {
-                final next = VideoPlayerController.file(File(item.path));
+                final next = VideoPlayerController.file(File(item.path), videoPlayerOptions: const VideoPlayerOptions(mixWithOthers: true));
                 await next.initialize();
                 if (!mounted || token != loadToken) { await next.dispose(); return; }
                 item.duration = next.value.duration.inMilliseconds / 1000;
@@ -1130,8 +1131,22 @@ jobs:
               final cut = item.trimStart + playhead;
               if (cut <= item.trimStart + .1 || cut >= item.trimEnd - .1) { toast('Move the playhead inside the selected video range first.'); return; }
               final oldEnd = item.trimEnd;
-              final second = MediaClip(path: item.path, name: '${item.name} (split)', isVideo: true, duration: item.duration)..trimStart = cut..trimEnd = oldEnd;
-              setState(() { item.trimEnd = cut; clips.insert(selectedIndex + 1, second); }); toast('Clip split at ${time(playhead)} into two timeline segments.');
+              final second = MediaClip(path: item.path, name: '${item.name} (split)', isVideo: true, duration: item.duration)
+                ..trimStart = cut
+                ..trimEnd = oldEnd
+                ..speed = item.speed
+                ..speedMode = item.speedMode
+                ..curvePreset = item.curvePreset
+                ..scale = item.scale
+                ..rotation = item.rotation
+                ..positionX = item.positionX
+                ..positionY = item.positionY
+                ..opacity = item.opacity
+                ..audioVolume = item.audioVolume
+                ..audioMuted = item.audioMuted;
+              second.keyframes.addAll(item.keyframes.where((k) => k.time >= cut).map((k) => KeyframePoint(time: k.time - cut, scale: k.scale, x: k.x, y: k.y, opacity: k.opacity, volume: k.volume)));
+              setState(() { item.trimEnd = cut; clips.insert(selectedIndex + 1, second); });
+              toast('Clip split at ${time(playhead)} into two timeline segments.');
             }
 
             Future<void> extractAudio() async {
@@ -1211,7 +1226,7 @@ jobs:
                   final layer = OverlayClip(path: f.path!, name: f.name, isVideo: isVideo);
                   if (isVideo) {
                     try {
-                      final c = VideoPlayerController.file(File(layer.path)); await c.initialize();
+                      final c = VideoPlayerController.file(File(layer.path), videoPlayerOptions: const VideoPlayerOptions(mixWithOthers: true)); await c.initialize();
                       layer.duration = c.value.duration.inMilliseconds / 1000;
                       await c.setLooping(true); await c.setVolume(0); await c.pause(); overlayPlayers[layer.id] = c;
                     } catch (_) { layer.duration = 3; }
@@ -1886,7 +1901,7 @@ jobs:
               } else if (player == null || !player!.value.isInitialized) {
                 mediaContent = const Center(child: Text('Video preview unavailable', style: TextStyle(color: Colors.white70)));
               } else {
-                mediaContent = AspectRatio(aspectRatio: originalAspect, child: VideoPlayer(player!));
+                mediaContent = SizedBox.expand(child: FittedBox(fit: BoxFit.cover, child: SizedBox(width: player!.value.size.width, height: player!.value.size.height, child: VideoPlayer(player!))));
               }
               return LayoutBuilder(builder: (context, constraints) {
                 final availableW = constraints.maxWidth;
@@ -2005,6 +2020,7 @@ jobs:
 
             double get totalTimelineDuration => clips.fold<double>(0, (sum, c) => sum + ((c.isVideo && c.trimEnd > c.trimStart ? c.trimEnd - c.trimStart : c.duration) / c.speed.clamp(.1, 16)));
             double get timelinePixelsPerSecond => timelineZoom;
+            Future<Uint8List?> timelineThumbnail(String path) => timelineThumbnailCache.putIfAbsent(path, () => mediaChannel.invokeMethod<Uint8List>('videoThumbnail', {'path': path}));
 
             void followTimelinePlayhead() {
               WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2063,29 +2079,38 @@ jobs:
               Widget playhead(double height) => Positioned(left: 60 + projectTime * timelinePixelsPerSecond, top: 0, bottom: 0, child: Container(width: 2, color: const Color(0xFFE34B5B)));
               final rulerTicks = <Widget>[];
               final pixelsPerFrame = timelinePixelsPerSecond / exportFps;
+              final scrollOffset = timelineScrollController.hasClients ? timelineScrollController.offset : 0.0;
+              final viewport = timelineScrollController.hasClients ? timelineScrollController.position.viewportDimension : 360.0;
+              final visibleStart = ((scrollOffset - inset) / timelinePixelsPerSecond).clamp(0.0, totalTimelineDuration).toDouble();
+              final visibleEnd = ((scrollOffset + viewport - inset) / timelinePixelsPerSecond).clamp(0.0, totalTimelineDuration).toDouble();
               if (pixelsPerFrame >= 8) {
-                final scrollOffset = timelineScrollController.hasClients ? timelineScrollController.offset : 0.0;
-                final viewport = timelineScrollController.hasClients ? timelineScrollController.position.viewportDimension : 360.0;
-                final firstFrame = (((scrollOffset - 60).clamp(0.0, width)) / timelinePixelsPerSecond * exportFps).floor();
-                final lastFrame = ((((scrollOffset + viewport - 60).clamp(0.0, width)) / timelinePixelsPerSecond * exportFps).ceil() + 1);
-                for (var frame = firstFrame; frame <= lastFrame && frame - firstFrame < 1000; frame++) {
+                final firstFrame = (visibleStart * exportFps).floor();
+                final lastFrame = (visibleEnd * exportFps).ceil() + 1;
+                for (var frame = firstFrame; frame <= lastFrame && frame - firstFrame < 1400; frame++) {
                   final x = inset + frame * pixelsPerFrame;
                   final major = frame % exportFps == 0;
                   rulerTicks.add(Positioned(left: x, top: major ? 1 : 8, child: Container(width: 1, height: major ? 12 : 5, color: major ? const Color(0xFF77717F) : const Color(0xFFB8B3C2))));
                   if (major) {
-                    final sec = frame ~/ exportFps;
-                    rulerTicks.add(Positioned(left: x + 2, top: 0, child: Text('${sec}s', style: const TextStyle(fontSize: 8, color: Colors.black54))));
-                  } else if (pixelsPerFrame >= 20) {
-                    rulerTicks.add(Positioned(left: x + 2, top: 0, child: Text('${frame % exportFps}', style: const TextStyle(fontSize: 7, color: Colors.black45))));
+                    rulerTicks.add(Positioned(left: x + 2, top: 0, child: Text('${frame ~/ exportFps}s', style: const TextStyle(fontSize: 8, color: Colors.black54))));
+                  } else if (pixelsPerFrame >= 18) {
+                    rulerTicks.add(Positioned(left: x + 2, top: 0, child: Text('${frame % exportFps}f', style: const TextStyle(fontSize: 7, color: Colors.black45))));
                   }
                 }
               } else {
-                final secondCount = (width / timelinePixelsPerSecond).ceil() + 1;
-                for (var second = 0; second < secondCount; second++) {
-                  final x = inset + second * timelinePixelsPerSecond;
-                  rulerTicks.add(Positioned(left: x, top: 1, child: Text('${second}s', style: const TextStyle(fontSize: 8, color: Colors.black54))));
-                  for (var sub = 1; sub < 5; sub++) {
-                    rulerTicks.add(Positioned(left: x + timelinePixelsPerSecond * sub / 5, top: 10, child: Container(width: 1, height: 4, color: const Color(0xFFB8B3C2))));
+                const intervals = <double>[1, 2, 5, 10, 15, 30, 60, 120, 180, 300, 600, 900, 1800, 3600];
+                final interval = intervals.firstWhere((v) => v * timelinePixelsPerSecond >= 58, orElse: () => 3600);
+                var tick = (visibleStart / interval).floor() * interval;
+                for (; tick <= visibleEnd + interval && rulerTicks.length < 180; tick += interval) {
+                  final x = inset + tick * timelinePixelsPerSecond;
+                  final label = tick >= 3600 && tick % 3600 == 0
+                      ? '${(tick / 3600).round()}h'
+                      : tick >= 60 ? '${(tick / 60).round()}min' : '${tick.round()}s';
+                  rulerTicks.add(Positioned(left: x, top: 1, child: Container(width: 1, height: 12, color: const Color(0xFF77717F))));
+                  rulerTicks.add(Positioned(left: x + 2, top: 0, child: Text(label, style: const TextStyle(fontSize: 8, color: Colors.black54))));
+                  if (interval * timelinePixelsPerSecond >= 110) {
+                    for (var sub = 1; sub < 5; sub++) {
+                      rulerTicks.add(Positioned(left: x + interval * timelinePixelsPerSecond * sub / 5, top: 10, child: Container(width: 1, height: 4, color: const Color(0xFFB8B3C2))));
+                    }
                   }
                 }
               }
@@ -2115,20 +2140,27 @@ jobs:
                         child: Stack(
                           alignment: Alignment.centerLeft,
                           children: [
-                            Row(
-                              children: [
-                                Icon(clip.isVideo ? Icons.videocam : Icons.image, size: 12, color: purple),
-                                const SizedBox(width: 3),
-                                Expanded(
-                                  child: Text(
-                                    clip.name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontSize: 9, color: Colors.black87),
-                                  ),
+                            Positioned.fill(
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: Opacity(
+                                  opacity: .72,
+                                  child: clip.isVideo
+                                      ? FutureBuilder<Uint8List?>(
+                                          future: timelineThumbnail(clip.path),
+                                          builder: (context, snapshot) => snapshot.hasData
+                                              ? Image.memory(snapshot.data!, fit: BoxFit.cover, gaplessPlayback: true)
+                                              : const ColoredBox(color: Color(0xFFE4E0EA)),
+                                        )
+                                      : Image.file(File(clip.path), fit: BoxFit.cover),
                                 ),
-                              ],
+                              ),
                             ),
+                            Positioned(left: 3, right: 3, bottom: 2, child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                              decoration: BoxDecoration(color: Colors.white.withOpacity(.78), borderRadius: BorderRadius.circular(3)),
+                              child: Text(clip.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 8, color: Colors.black87)),
+                            )),
                             for (final kf in clip.keyframes.where((k) => k.time >= start && k.time <= start + duration))
                               Positioned(
                                 left: ((kf.time - start) * timelinePixelsPerSecond).clamp(0.0, blockWidth - 8).toDouble(),
@@ -2142,6 +2174,24 @@ jobs:
                                   ),
                                 ),
                               ),
+                            if (selectedIndex == i && clip.isVideo)
+                              Positioned(left: 0, top: 0, bottom: 0, width: 10, child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onHorizontalDragUpdate: (d) => setState(() {
+                                  final end = clip.trimEnd > 0 ? clip.trimEnd : clip.duration;
+                                  clip.trimStart = (clip.trimStart + d.delta.dx / timelinePixelsPerSecond * clip.speed).clamp(0.0, end - .1).toDouble();
+                                }),
+                                child: Container(color: purple.withOpacity(.85), child: const Icon(Icons.drag_indicator, size: 9, color: Colors.white)),
+                              )),
+                            if (selectedIndex == i && clip.isVideo)
+                              Positioned(right: 0, top: 0, bottom: 0, width: 10, child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onHorizontalDragUpdate: (d) => setState(() {
+                                  final end = clip.trimEnd > 0 ? clip.trimEnd : clip.duration;
+                                  clip.trimEnd = (end + d.delta.dx / timelinePixelsPerSecond * clip.speed).clamp(clip.trimStart + .1, clip.duration).toDouble();
+                                }),
+                                child: Container(color: purple.withOpacity(.85), child: const Icon(Icons.drag_indicator, size: 9, color: Colors.white)),
+                              )),
                           ],
                         ),
                       ),
@@ -2255,11 +2305,9 @@ jobs:
                     onScaleUpdate: (details) {
                       if (details.pointerCount < 2) return;
                       final viewport = timelineScrollController.hasClients ? timelineScrollController.position.viewportDimension : 360.0;
-                      final fitToPhoneZoom = totalTimelineDuration > 0
-                          ? ((viewport - 60).clamp(120.0, 1000.0) / totalTimelineDuration).clamp(0.5, 55.0).toDouble()
-                          : 8.0;
+                      const minimumTimelineZoom = 0.08; // about one hour across a phone-width timeline
                       final frameDetailZoom = (exportFps * 48.0).clamp(1440.0, 5760.0).toDouble();
-                      final nextZoom = (_timelineZoomStart * details.scale).clamp(fitToPhoneZoom, frameDetailZoom).toDouble();
+                      final nextZoom = (_timelineZoomStart * details.scale).clamp(minimumTimelineZoom, frameDetailZoom).toDouble();
                       final contentX = _timelineScrollStart + _timelineFocalX - 60;
                       setState(() => timelineZoom = nextZoom);
                       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2613,7 +2661,7 @@ jobs:
                   ])))
                 : SafeArea(child: Column(children: [
                 Expanded(child: Column(children: [
-                  Expanded(child: Padding(padding: const EdgeInsets.fromLTRB(12, 6, 12, 4), child: Container(width: double.infinity, decoration: BoxDecoration(color: const Color(0xFF111116), borderRadius: BorderRadius.circular(12)), clipBehavior: Clip.antiAlias, child: preview()))),
+                  Expanded(child: Padding(padding: const EdgeInsets.fromLTRB(12, 6, 12, 4), child: Container(width: double.infinity, decoration: BoxDecoration(color: const Color(0xFFF4F4F7), borderRadius: BorderRadius.circular(12)), clipBehavior: Clip.antiAlias, child: preview()))),
                   SizedBox(height: 38, child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [IconButton(onPressed: clips.isEmpty ? null : () => playingSequence ? stopSequence() : playAll(), icon: Icon(playingSequence ? Icons.pause_circle_filled : Icons.play_circle_fill, size: 30, color: purple)), Text('${time(playhead)}  /  ${time(current?.duration ?? 0)}', style: const TextStyle(fontSize: 11, color: Colors.black54))])),
                   timelinePanel(),
                 ])),
