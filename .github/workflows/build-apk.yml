@@ -1205,7 +1205,7 @@ jobs:
                     args.addAll(['-loop', '1', '-t', sourceDuration.toStringAsFixed(3), '-i', c.path]);
                   }
                 }
-                for (final o in overlays) {
+                for (final o in overlays.where((layer) => layer.kind != 'emoji')) {
                   if (o.isVideo || o.path.toLowerCase().endsWith('.gif')) {
                     args.addAll(['-stream_loop', '-1', '-i', o.path]);
                   } else {
@@ -1444,8 +1444,9 @@ jobs:
                   filters.add('[' + previous + ']' + fadeFilter + '[' + fadeLabel + ']');
                   previous = fadeLabel;
                 }
-                for (var j = 0; j < overlays.length; j++) {
-                  final o = overlays[j];
+                final exportOverlays = overlays.where((layer) => layer.kind != 'emoji').toList();
+                for (var j = 0; j < exportOverlays.length; j++) {
+                  final o = exportOverlays[j];
                   final inputIndex = clips.length + j;
                   final startTime = o.start.clamp(0, 86400).toDouble();
                   final safeStart = startTime.clamp(0, projectDuration > .05 ? projectDuration - .05 : 0).toDouble();
@@ -1489,7 +1490,7 @@ jobs:
 
                 // Build a synchronized audio mix from original clip audio and every enabled music track.
                 final audioLabels = <String>[];
-                var audioInputIndex = clips.length + overlays.length;
+                var audioInputIndex = clips.length + exportOverlays.length;
                 var audioTimelineStart = 0.0;
                 for (var i = 0; i < audioInputs.length; i++) {
                   final input = audioInputs[i];
