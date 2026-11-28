@@ -811,9 +811,9 @@ jobs:
                       p.setPlaybackSpeed(nextSpeed);
                     }
                   }
-                  applyKeyframes();
-                  if (timer.tick % 5 == 0) { startAudioMix(); startOverlayMix(); }
                   if (mounted) setState(() => playhead = relative);
+                  applyKeyframes();
+                  syncTimelineLayers();
                   if (pos >= item.trimEnd) { timer.cancel(); playAt(index + 1); }
                 });
               } catch (e) { toast('Could not play ${item.name}'); playAt(index + 1); }
