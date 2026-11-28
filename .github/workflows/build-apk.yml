@@ -1945,7 +1945,7 @@ jobs:
               final frames = totalFrames % fps;
               return '${time(wholeSeconds)}:${frames.toString().padLeft(2, '0')}';
             }
-            double get timelineContentWidth => (totalTimelineDuration * timelinePixelsPerSecond).clamp(500.0, 2000000.0).toDouble();
+            double get timelineContentWidth => totalTimelineDuration > 0 ? (totalTimelineDuration * timelinePixelsPerSecond).clamp(1.0, 2000000.0).toDouble() : 500.0;
 
             Future<void> seekTimeline(double seconds) async {
               if (clips.isEmpty) return;
