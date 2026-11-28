@@ -654,7 +654,7 @@ jobs:
                 return;
               }
               try {
-                final next = VideoPlayerController.file(File(item.path), videoPlayerOptions: const VideoPlayerOptions(mixWithOthers: true));
+                final next = VideoPlayerController.file(File(item.path), videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true));
                 await next.initialize();
                 if (!mounted || token != loadToken) { await next.dispose(); return; }
                 item.duration = next.value.duration.inMilliseconds / 1000;
@@ -1226,7 +1226,7 @@ jobs:
                   final layer = OverlayClip(path: f.path!, name: f.name, isVideo: isVideo);
                   if (isVideo) {
                     try {
-                      final c = VideoPlayerController.file(File(layer.path), videoPlayerOptions: const VideoPlayerOptions(mixWithOthers: true)); await c.initialize();
+                      final c = VideoPlayerController.file(File(layer.path), videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true)); await c.initialize();
                       layer.duration = c.value.duration.inMilliseconds / 1000;
                       await c.setLooping(true); await c.setVolume(0); await c.pause(); overlayPlayers[layer.id] = c;
                     } catch (_) { layer.duration = 3; }
