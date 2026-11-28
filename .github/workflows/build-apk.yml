@@ -494,7 +494,7 @@ jobs:
             bool _showVerticalCenterGuide = false;
             bool _showHorizontalCenterGuide = false;
             Timer? sequenceTimer;
-            String activeTool = 'Edit';
+            String activeTool = 'Home';
             String cropRatio = 'Original';
             String filter = 'None';
             String audioName = '';
@@ -2049,7 +2049,7 @@ jobs:
                 final blockWidth = (track.duration * timelinePixelsPerSecond).clamp(42.0, 12000.0).toDouble();
                 audioBlocks.add(Positioned(left: 60 + track.start * timelinePixelsPerSecond, top: 3, bottom: 3, width: blockWidth, child: GestureDetector(onTap: () => setState(() { selectedAudio = i; selectedOverlay = -1; activeTool = 'Audio'; }), onHorizontalDragUpdate: (d) => setState(() => track.start = (track.start + d.delta.dx / timelinePixelsPerSecond).clamp(0, totalTimelineDuration).toDouble()), child: Container(margin: const EdgeInsets.only(right: 3), padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4), decoration: BoxDecoration(color: selectedAudio == i ? const Color(0xFFDFF4E6) : const Color(0xFFEAF7EF), borderRadius: BorderRadius.circular(5), border: Border.all(color: selectedAudio == i ? Colors.green : const Color(0xFFCDE6D4))), child: Row(children: [const Icon(Icons.music_note, size: 12, color: Colors.green), const SizedBox(width: 3), Expanded(child: Text(track.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 9)))])))));
               }
-              Widget trackRow(String label, Color labelColor, List<Widget> blocks) => SizedBox(width: totalWidth, height: 40, child: Stack(clipBehavior: Clip.none, children: [rowLabel(label, labelColor), Positioned(left: 60, right: 0, top: 0, bottom: 0, child: Container(decoration: BoxDecoration(color: const Color(0xFFFAFAFC), border: Border.all(color: const Color(0xFFE9E7EF)), borderRadius: BorderRadius.circular(5)))), ...blocks, playhead(40)]));
+              Widget trackRow(String label, Color labelColor, List<Widget> blocks) => SizedBox(width: totalWidth, height: 40, child: Stack(clipBehavior: Clip.none, children: [rowLabel(label, labelColor), Positioned(left: 60, right: 0, top: 0, bottom: 0, child: Container(decoration: BoxDecoration(color: const Color(0xFFFAFAFC), border: Border.all(color: const Color(0xFFE9E7EF)), borderRadius: BorderRadius.circular(5)))), ...blocks]));
               return Container(
                 height: 168,
                 margin: const EdgeInsets.symmetric(horizontal: 10),
@@ -2057,7 +2057,8 @@ jobs:
                 decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(9)),
                 child: Column(children: [
                   Row(children: [const Text('TIMELINE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: .8)), const Spacer(), Text('${frameTimecode(projectTime)}  •  ${exportFps} FPS', style: const TextStyle(fontSize: 9, color: Colors.black54, fontFeatures: [FontFeature.tabularFigures()])), IconButton(tooltip: 'Add keyframe', visualDensity: VisualDensity.compact, constraints: const BoxConstraints(minWidth: 30, minHeight: 28), padding: EdgeInsets.zero, onPressed: addKeyframe, icon: const Icon(Icons.add, size: 21, color: purple))]),
-                  Expanded(child: GestureDetector(
+                  Expanded(child: Stack(alignment: Alignment.center, children: [
+                  GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onScaleStart: (details) {
                       _timelineZoomStart = timelineZoom;
@@ -2096,7 +2097,9 @@ jobs:
                       ]),
                     )),
                     ),
-                  )),
+                  ),
+                  Positioned(top: 0, bottom: 0, left: 0, right: 0, child: IgnorePointer(child: Center(child: Container(width: 2, decoration: BoxDecoration(color: const Color(0xFFE34B5B), boxShadow: [BoxShadow(color: Colors.white.withOpacity(.9), blurRadius: 1, spreadRadius: .5)]))))),
+                  ])),
                 ]),
               );
             }
@@ -2130,9 +2133,15 @@ jobs:
                 }));
 
             Widget toolButton(String name, IconData icon) {
-              final active = activeTool == name;
-              return InkWell(onTap: () => setState(() => activeTool = name), child: SizedBox(width: 65, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, color: active ? purple : Colors.black54, size: 21), const SizedBox(height: 3), Text(name, style: TextStyle(fontSize: 9, color: active ? purple : Colors.black87, fontWeight: active ? FontWeight.bold : FontWeight.normal))])));
+              return InkWell(onTap: () => setState(() => activeTool = name), child: SizedBox(width: 65, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon, color: purple, size: 21), const SizedBox(height: 3), Text(name, style: const TextStyle(fontSize: 9, color: Colors.black87))])));
             }
+            Widget toolSubPanel() => Container(
+              width: double.infinity, constraints: const BoxConstraints(minHeight: 150, maxHeight: 205),
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 8), decoration: const BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: Color(0xFFE5E5EA)))),
+              child: Column(children: [
+                SizedBox(height: 34, child: Row(children: [IconButton(visualDensity: VisualDensity.compact, onPressed: () => setState(() => activeTool = 'Home'), icon: const Icon(Icons.arrow_back, size: 21)), Expanded(child: Text(activeTool.toUpperCase(), style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: .8))), if (activeTool == 'Audio') IconButton(visualDensity: VisualDensity.compact, onPressed: chooseAudio, icon: const Icon(Icons.add, color: purple))])),
+                Expanded(child: SingleChildScrollView(child: toolPanel()))
+              ]));
             Widget chip(String label, IconData icon, VoidCallback action) => ActionChip(avatar: Icon(icon, size: 15), label: Text(label, style: const TextStyle(fontSize: 11)), onPressed: action, visualDensity: VisualDensity.compact);
 
             Widget toolPanel() {
@@ -2392,9 +2401,11 @@ jobs:
                   Expanded(child: Padding(padding: const EdgeInsets.fromLTRB(12, 6, 12, 4), child: Container(width: double.infinity, decoration: BoxDecoration(color: const Color(0xFF111116), borderRadius: BorderRadius.circular(12)), clipBehavior: Clip.antiAlias, child: preview()))),
                   SizedBox(height: 38, child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [IconButton(onPressed: clips.isEmpty ? null : () => playingSequence ? stopSequence() : playAll(), icon: Icon(playingSequence ? Icons.pause_circle_filled : Icons.play_circle_fill, size: 30, color: purple)), Text('${time(playhead)}  /  ${time(current?.duration ?? 0)}', style: const TextStyle(fontSize: 11, color: Colors.black54))])),
                   timelinePanel(),
-                  Container(width: double.infinity, constraints: const BoxConstraints(minHeight: 110, maxHeight: 190), margin: const EdgeInsets.fromLTRB(10, 5, 10, 0), padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(10)), child: SingleChildScrollView(child: toolPanel())),
                 ])),
-                Container(height: 65, padding: const EdgeInsets.symmetric(horizontal: 3), decoration: const BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: Color(0xFFE5E5EA)))), child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [toolButton('Edit', Icons.tune), toolButton('Audio', Icons.music_note), toolButton('Text', Icons.title), toolButton('Stickers', Icons.emoji_emotions_outlined), toolButton('Overlay', Icons.layers), toolButton('Effects', Icons.auto_awesome), toolButton('Canvas', Icons.aspect_ratio), toolButton('Adjust', Icons.color_lens)]))),
+                if (activeTool == 'Home')
+                  Container(height: 65, padding: const EdgeInsets.symmetric(horizontal: 3), decoration: const BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: Color(0xFFE5E5EA)))), child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [toolButton('Edit', Icons.tune), toolButton('Audio', Icons.music_note), toolButton('Text', Icons.title), toolButton('Stickers', Icons.emoji_emotions_outlined), toolButton('Overlay', Icons.layers), toolButton('Effects', Icons.auto_awesome), toolButton('Canvas', Icons.aspect_ratio), toolButton('Adjust', Icons.color_lens)])))
+                else
+                  toolSubPanel(),
               ])),
             );
           }
