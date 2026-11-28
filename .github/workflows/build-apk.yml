@@ -495,6 +495,7 @@ jobs:
             double speed = 1;
             double playhead = 0;
             double? originalImageAspect;
+            double? projectCanvasAspect;
             double _gestureScale = 1;
             double _gestureX = .5;
             double _gestureY = .5;
@@ -593,7 +594,7 @@ jobs:
 
             void toast(String value) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(value))); }
             String time(double s) { final n = s.floor(); return '${(n ~/ 60).toString().padLeft(2,'0')}:${(n % 60).toString().padLeft(2,'0')}'; }
-            double get aspect => cropRatio == '9:16' ? 9/16 : cropRatio == '16:9' ? 16/9 : cropRatio == '1:1' ? 1 : (current?.isVideo == true && player?.value.isInitialized == true ? player!.value.aspectRatio : (originalImageAspect ?? 16/9));
+            double get aspect => cropRatio == '9:16' ? 9/16 : cropRatio == '16:9' ? 16/9 : cropRatio == '1:1' ? 1 : (projectCanvasAspect ?? 16/9);
 
             double curveSpeedAt(MediaClip item, double sourcePosition) {
               final length = (item.trimEnd - item.trimStart).clamp(.1, 999999).toDouble();
@@ -635,6 +636,7 @@ jobs:
                   final codec = await ui.instantiateImageCodec(await File(item.path).readAsBytes());
                   final frame = await codec.getNextFrame();
                   originalImageAspect = frame.image.width / frame.image.height;
+                  if (index == 0 && projectCanvasAspect == null) projectCanvasAspect = originalImageAspect;
                   frame.image.dispose();
                   codec.dispose();
                 } catch (_) { originalImageAspect = 16 / 9; }
@@ -647,6 +649,7 @@ jobs:
                 if (!mounted || token != loadToken) { await next.dispose(); return; }
                 item.duration = next.value.duration.inMilliseconds / 1000;
                 originalImageAspect = next.value.aspectRatio;
+                if (index == 0 && projectCanvasAspect == null) projectCanvasAspect = originalImageAspect;
                 if (item.trimEnd <= 0 || item.trimEnd > item.duration) item.trimEnd = item.duration;
                 player = next;
                 await next.setVolume(item.audioMuted ? 0 : item.audioVolume);
@@ -1277,8 +1280,11 @@ jobs:
               try {
                 await ensureClipDurations();
                 final size = exportResolution == '720p' ? 720 : exportResolution == '1080p' ? 1080 : exportResolution == '2K' ? 1440 : 2160;
-                final width = cropRatio == '9:16' || cropRatio == '1:1' ? size : size * 16 ~/ 9;
-                final height = cropRatio == '9:16' ? size * 16 ~/ 9 : cropRatio == '1:1' ? size : size;
+                final projectAspect = aspect;
+                final rawWidth = projectAspect >= 1 ? size * projectAspect : size;
+                final rawHeight = projectAspect < 1 ? size / projectAspect : size;
+                final width = rawWidth.round().isEven ? rawWidth.round() : rawWidth.round() + 1;
+                final height = rawHeight.round().isEven ? rawHeight.round() : rawHeight.round() + 1;
                 final args = <String>['-y'];
                 final durations = <double>[];
                 final clipSpeeds = <double>[];
@@ -1836,7 +1842,27 @@ jobs:
                                   opacity: (clipOpacity * animationOpacity).clamp(0, 1).toDouble(),
                                   child: ClipPath(
                                     clipper: maskShape == 'Circle' ? _CircleClipper() : maskShape == 'Oval' ? _OvalClipper() : null,
+                                    child: GestureDetector(
+                                    behavior: HitTestBehavior.translucent,
+                                    onScaleStart: (d) {
+                                      if (item == null) return;
+                                      _gestureScale = item.scale;
+                                      _gestureX = item.positionX;
+                                      _gestureY = item.positionY;
+                                      _gestureRotation = item.rotation;
+                                      _gestureFocal = d.focalPoint;
+                                    },
+                                    onScaleUpdate: (d) {
+                                      if (item == null) return;
+                                      setState(() {
+                                        item.scale = (_gestureScale * d.scale).clamp(.05, 8.0).toDouble();
+                                        item.positionX = (_gestureX + (d.focalPoint.dx - _gestureFocal.dx) / canvasW).clamp(-1.5, 2.5).toDouble();
+                                        item.positionY = (_gestureY + (d.focalPoint.dy - _gestureFocal.dy) / canvasH).clamp(-1.5, 2.5).toDouble();
+                                        item.rotation = _gestureRotation + d.rotation;
+                                      });
+                                    },
                                     child: ColorFiltered(colorFilter: ColorFilter.matrix(previewColorMatrix), child: mediaContent),
+                                  ),
                                   ),
                                 ),
                               ),
