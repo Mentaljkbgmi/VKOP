@@ -469,6 +469,7 @@ jobs:
             final Map<Object, AudioPlayer> audioPlayers = {};
             final Map<Object, VideoPlayerController> overlayPlayers = {};
             final TransformationController previewTransform = TransformationController();
+            final ScrollController timelineScrollController = ScrollController();
             VideoPlayerController? player;
             int selectedIndex = 0;
             int selectedOverlay = -1;
@@ -803,6 +804,7 @@ jobs:
                 sequenceTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
                   if (!mounted || token != sequenceToken || !playingSequence) { timer.cancel(); return; }
                   setState(() => playhead = (playhead + (.1 * item.speed)).clamp(0, item.duration).toDouble());
+                  followTimelinePlayhead();
                   applyKeyframes();
                   syncTimelineLayers();
                   if (playhead >= item.duration) { timer.cancel(); playAt(index + 1); }
@@ -828,6 +830,7 @@ jobs:
                     }
                   }
                   if (mounted) setState(() => playhead = relative);
+                  followTimelinePlayhead();
                   applyKeyframes();
                   syncTimelineLayers();
                   if (pos >= item.trimEnd) { timer.cancel(); playAt(index + 1); }
@@ -1919,6 +1922,25 @@ jobs:
 
             double get totalTimelineDuration => clips.fold<double>(0, (sum, c) => sum + ((c.isVideo && c.trimEnd > c.trimStart ? c.trimEnd - c.trimStart : c.duration) / c.speed.clamp(.1, 16)));
             double get timelinePixelsPerSecond => 55;
+
+            void followTimelinePlayhead() {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted || !timelineScrollController.hasClients || !playingSequence) return;
+                final position = timelineScrollController.position;
+                final playheadX = 60 + projectTime * timelinePixelsPerSecond;
+                final target = (playheadX - position.viewportDimension * .5)
+                    .clamp(0.0, position.maxScrollExtent).toDouble();
+                timelineScrollController.jumpTo(target);
+              });
+            }
+
+            String frameTimecode(double seconds) {
+              final fps = exportFps;
+              final totalFrames = (seconds * fps).floor();
+              final wholeSeconds = totalFrames ~/ fps;
+              final frames = totalFrames % fps;
+              return '${time(wholeSeconds)}:${frames.toString().padLeft(2, '0')}';
+            }
             double get timelineContentWidth => (totalTimelineDuration * timelinePixelsPerSecond).clamp(500.0, 12000.0).toDouble();
 
             Future<void> seekTimeline(double seconds) async {
@@ -1955,7 +1977,15 @@ jobs:
               final totalWidth = width + 60;
               Widget rowLabel(String title, Color color) => Positioned(left: 5, top: 0, bottom: 0, width: 50, child: Align(alignment: Alignment.centerLeft, child: Text(title, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: color))));
               Widget playhead(double height) => Positioned(left: 60 + projectTime * timelinePixelsPerSecond, top: 0, bottom: 0, child: Container(width: 2, color: const Color(0xFFE34B5B)));
-              final rulerTicks = List.generate((width / 275).ceil() + 1, (i) => Positioned(left: 60 + i * 275.0, top: 2, child: Text('${i * 5}s', style: const TextStyle(fontSize: 8, color: Colors.black45))));
+              final rulerTicks = <Widget>[];
+              final secondCount = (width / timelinePixelsPerSecond).ceil() + 1;
+              for (var second = 0; second < secondCount; second++) {
+                final x = 60 + second * timelinePixelsPerSecond;
+                rulerTicks.add(Positioned(left: x, top: 1, child: Text('${second}s', style: const TextStyle(fontSize: 8, color: Colors.black54))));
+                for (var sub = 1; sub < 5; sub++) {
+                  rulerTicks.add(Positioned(left: x + timelinePixelsPerSecond * sub / 5, top: 10, child: Container(width: 1, height: sub == 0 ? 7 : 4, color: const Color(0xFFB8B3C2))));
+                }
+              }
               final mainBlocks = <Widget>[];
               var cursor = 0.0;
               for (var i = 0; i < clips.length; i++) {
@@ -1985,8 +2015,9 @@ jobs:
                 padding: const EdgeInsets.fromLTRB(8, 3, 8, 5),
                 decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(9)),
                 child: Column(children: [
-                  Row(children: [const Text('TIMELINE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: .8)), const Spacer(), Text('${time(totalTimelineDuration)}', style: const TextStyle(fontSize: 9, color: Colors.black54)), IconButton(tooltip: 'Add keyframe', visualDensity: VisualDensity.compact, constraints: const BoxConstraints(minWidth: 30, minHeight: 28), padding: EdgeInsets.zero, onPressed: addKeyframe, icon: const Icon(Icons.add, size: 21, color: purple))]),
+                  Row(children: [const Text('TIMELINE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: .8)), const Spacer(), Text('${frameTimecode(projectTime)}  •  ${exportFps} FPS', style: const TextStyle(fontSize: 9, color: Colors.black54, fontFeatures: [FontFeature.tabularFigures()])), IconButton(tooltip: 'Add keyframe', visualDensity: VisualDensity.compact, constraints: const BoxConstraints(minWidth: 30, minHeight: 28), padding: EdgeInsets.zero, onPressed: addKeyframe, icon: const Icon(Icons.add, size: 21, color: purple))]),
                   Expanded(child: SingleChildScrollView(
+                    controller: timelineScrollController,
                     scrollDirection: Axis.horizontal,
                     child: SizedBox(width: totalWidth, child: SingleChildScrollView(
                       scrollDirection: Axis.vertical,
@@ -2267,7 +2298,7 @@ jobs:
 
             @override
             void dispose() {
-              exportProgressSubscription?.cancel(); sequenceTimer?.cancel(); player?.dispose(); previewTransform.dispose(); for (final c in overlayPlayers.values) { c.dispose(); } for (final a in audioPlayers.values) { a.dispose(); } textController.dispose(); super.dispose();
+              exportProgressSubscription?.cancel(); sequenceTimer?.cancel(); player?.dispose(); previewTransform.dispose(); timelineScrollController.dispose(); for (final c in overlayPlayers.values) { c.dispose(); } for (final a in audioPlayers.values) { a.dispose(); } textController.dispose(); super.dispose();
             }
 
             @override
