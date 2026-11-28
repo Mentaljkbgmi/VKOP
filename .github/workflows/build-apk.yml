@@ -458,6 +458,9 @@ jobs:
             String textColorName = 'White';
             double textSize = 30;
             bool textBold = true;
+            String selectedTextFont = 'Roboto';
+            String selectedTextTemplate = 'Classic';
+            String textAnimationPreset = 'None';
             double brightness = 0;
             double contrast = 1;
             double saturation = 1;
@@ -732,6 +735,82 @@ jobs:
               'Transparent' => Colors.transparent,
               _ => Colors.black,
             };
+
+            static const textFontOptions = <String>[
+              'Roboto','Roboto Condensed','Roboto Light','Roboto Medium','Roboto Black','Roboto Thin',
+              'Noto Sans','Noto Serif','Noto Mono','Droid Sans','Droid Serif','Serif','Monospace','Casual','Cursive',
+              'Sans Serif','Sans Serif Condensed','Sans Serif Light','Sans Serif Thin','Sans Serif Medium','Sans Serif Black',
+              'Sans Serif Small Caps','Sans Serif Rounded','Serif Monospace','Noto Sans Devanagari','Noto Sans Arabic',
+              'Noto Sans Thai','Noto Sans Symbols','Noto Color Emoji','System Default'
+            ];
+            static const textTemplateOptions = <String>[
+              'Classic','Cinematic','YouTube Title','Subtitle','Neon','Gaming','Minimal','Quote','Bold Impact','Elegant',
+              'Travel','Vlog','Retro','News','Social','Horror','Romantic','Luxury','Comic','Documentary'
+            ];
+            static const textAnimationOptions = <String>[
+              'None','Fade In','Fade Out','Slide Up','Slide Down','Slide Left','Slide Right','Zoom In','Zoom Out','Pop','Bounce','Typewriter'
+            ];
+
+            String get selectedTextFontFamily => switch (selectedTextFont) {
+              'Roboto Condensed' || 'Sans Serif Condensed' => 'sans-serif-condensed',
+              'Roboto Light' || 'Sans Serif Light' => 'sans-serif-light',
+              'Roboto Medium' || 'Sans Serif Medium' => 'sans-serif-medium',
+              'Roboto Black' || 'Sans Serif Black' => 'sans-serif-black',
+              'Roboto Thin' || 'Sans Serif Thin' => 'sans-serif-thin',
+              'Noto Serif' || 'Droid Serif' || 'Serif' => 'serif',
+              'Noto Mono' || 'Monospace' || 'Serif Monospace' => 'monospace',
+              'Casual' => 'casual', 'Cursive' => 'cursive',
+              'Sans Serif Small Caps' => 'sans-serif-smallcaps',
+              'Sans Serif Rounded' => 'sans-serif-rounded',
+              _ => 'sans-serif'
+            };
+
+            String get textFontFile => switch (selectedTextFont) {
+              'Roboto Condensed' || 'Sans Serif Condensed' => '/system/fonts/RobotoCondensed-Regular.ttf',
+              'Roboto Light' || 'Sans Serif Light' => '/system/fonts/Roboto-Light.ttf',
+              'Roboto Medium' || 'Sans Serif Medium' => '/system/fonts/Roboto-Medium.ttf',
+              'Roboto Black' || 'Sans Serif Black' => '/system/fonts/Roboto-Black.ttf',
+              'Roboto Thin' || 'Sans Serif Thin' => '/system/fonts/Roboto-Thin.ttf',
+              'Noto Serif' || 'Droid Serif' || 'Serif' => '/system/fonts/NotoSerif-Regular.ttf',
+              'Noto Mono' || 'Monospace' || 'Serif Monospace' => '/system/fonts/DroidSansMono.ttf',
+              'Noto Sans Devanagari' => '/system/fonts/NotoSansDevanagari-Regular.ttf',
+              'Noto Sans Arabic' => '/system/fonts/NotoNaskhArabic-Regular.ttf',
+              'Noto Sans Thai' => '/system/fonts/NotoSansThai-Regular.ttf',
+              'Noto Sans Symbols' => '/system/fonts/NotoSansSymbols-Regular.ttf',
+              'Noto Color Emoji' => '/system/fonts/NotoColorEmoji.ttf',
+              'Droid Sans' || 'Noto Sans' || 'Sans Serif' || 'System Default' => '/system/fonts/Roboto-Regular.ttf',
+              'Casual' => '/system/fonts/ComingSoon.ttf',
+              'Cursive' => '/system/fonts/DancingScript-Regular.ttf',
+              _ => '/system/fonts/Roboto-Regular.ttf'
+            };
+
+            void applyTextTemplate(String template) {
+              setState(() {
+                selectedTextTemplate = template;
+                switch (template) {
+                  case 'Cinematic': selectedTextFont = 'Roboto Condensed'; textColorName = 'Yellow'; textSize = 38; textBold = true; textAnimationPreset = 'Fade In'; break;
+                  case 'YouTube Title': selectedTextFont = 'Roboto Black'; textColorName = 'White'; textSize = 46; textBold = true; textAnimationPreset = 'Pop'; break;
+                  case 'Subtitle': selectedTextFont = 'Roboto Medium'; textColorName = 'White'; textSize = 22; textBold = false; textAnimationPreset = 'Fade In'; break;
+                  case 'Neon': selectedTextFont = 'Cursive'; textColorName = 'Purple'; textSize = 40; textBold = true; textAnimationPreset = 'Zoom In'; break;
+                  case 'Gaming': selectedTextFont = 'Roboto Black'; textColorName = 'Red'; textSize = 44; textBold = true; textAnimationPreset = 'Bounce'; break;
+                  case 'Minimal': selectedTextFont = 'Noto Sans'; textColorName = 'White'; textSize = 26; textBold = false; textAnimationPreset = 'Fade In'; break;
+                  case 'Quote': selectedTextFont = 'Droid Serif'; textColorName = 'Yellow'; textSize = 34; textBold = false; textAnimationPreset = 'Slide Up'; break;
+                  case 'Bold Impact': selectedTextFont = 'Roboto Black'; textColorName = 'Yellow'; textSize = 52; textBold = true; textAnimationPreset = 'Zoom In'; break;
+                  case 'Elegant': selectedTextFont = 'Noto Serif'; textColorName = 'White'; textSize = 36; textBold = false; textAnimationPreset = 'Fade In'; break;
+                  case 'Travel': selectedTextFont = 'Roboto Condensed'; textColorName = 'White'; textSize = 40; textBold = true; textAnimationPreset = 'Slide Left'; break;
+                  case 'Vlog': selectedTextFont = 'Roboto Medium'; textColorName = 'Purple'; textSize = 36; textBold = true; textAnimationPreset = 'Pop'; break;
+                  case 'Retro': selectedTextFont = 'Casual'; textColorName = 'Yellow'; textSize = 40; textBold = true; textAnimationPreset = 'Bounce'; break;
+                  case 'News': selectedTextFont = 'Roboto Black'; textColorName = 'White'; textSize = 34; textBold = true; textAnimationPreset = 'Slide Right'; break;
+                  case 'Social': selectedTextFont = 'Sans Serif Rounded'; textColorName = 'Purple'; textSize = 34; textBold = true; textAnimationPreset = 'Pop'; break;
+                  case 'Horror': selectedTextFont = 'Noto Serif'; textColorName = 'Red'; textSize = 42; textBold = true; textAnimationPreset = 'Fade In'; break;
+                  case 'Romantic': selectedTextFont = 'Cursive'; textColorName = 'Purple'; textSize = 38; textBold = false; textAnimationPreset = 'Slide Up'; break;
+                  case 'Luxury': selectedTextFont = 'Noto Serif'; textColorName = 'Yellow'; textSize = 36; textBold = false; textAnimationPreset = 'Fade In'; break;
+                  case 'Comic': selectedTextFont = 'Casual'; textColorName = 'Yellow'; textSize = 42; textBold = true; textAnimationPreset = 'Bounce'; break;
+                  case 'Documentary': selectedTextFont = 'Roboto Light'; textColorName = 'White'; textSize = 30; textBold = false; textAnimationPreset = 'Fade In'; break;
+                  default: selectedTextFont = 'Roboto'; textColorName = 'White'; textSize = 30; textBold = true; textAnimationPreset = 'None';
+                }
+              });
+            }
 
             Color get selectedTextColor => switch (textColorName) {
               'Black' => Colors.black,
@@ -1268,9 +1347,27 @@ jobs:
                   };
                   final textOutput = 'text_rendered';
                   final fontSize = (textSize * width / 360).round().clamp(18, 220);
-                  filters.add('[' + previous + ']drawtext=fontfile=/system/fonts/Roboto-Regular.ttf:text=' +
-                    "'" + safeText + "'" + ':fontcolor=' + textColor + ':fontsize=' + fontSize.toString() +
-                    ':x=(w-text_w)/2:y=h*0.82:shadowcolor=black@0.8:shadowx=2:shadowy=2[' + textOutput + ']');
+                  var textX = '(w-text_w)/2';
+                  var textY = 'h*0.82';
+                  var textAlpha = '1';
+                  var textSizeExpression = fontSize.toString();
+                  switch (textAnimationPreset) {
+                    case 'Fade In': textAlpha = "if(lt(t\\,0.65)\\,t/0.65\\,1)"; break;
+                    case 'Fade Out': textAlpha = "if(gt(t\\," + (projectDuration - .65).clamp(0, projectDuration).toStringAsFixed(3) + ")\\,(" + projectDuration.toStringAsFixed(3) + "-t)/0.65\\,1)"; break;
+                    case 'Slide Up': textY = "h*0.82+max(0\\,(0.65-t))*120"; break;
+                    case 'Slide Down': textY = "h*0.82-max(0\\,(0.65-t))*120"; break;
+                    case 'Slide Left': textX = "(w-text_w)/2+max(0\\,(0.65-t))*180"; break;
+                    case 'Slide Right': textX = "(w-text_w)/2-max(0\\,(0.65-t))*180"; break;
+                    case 'Zoom In': textSizeExpression = "max(1\\," + fontSize.toString() + "*min(t/0.65\\,1))"; break;
+                    case 'Zoom Out': textSizeExpression = "max(1\\," + fontSize.toString() + "*(1.5-0.5*min(t/0.65\\,1)))"; break;
+                    case 'Pop': textSizeExpression = "max(1\\," + fontSize.toString() + "*(0.7+0.3*min(t/0.25\\,1)))"; break;
+                    case 'Bounce': textY = "h*0.82+abs(sin(t*12))*max(0\\,(0.65-t))*100"; break;
+                    case 'Typewriter': textAlpha = "if(gte(t\\,0.15)\\,1\\,0)"; break;
+                  }
+                  final boldFont = textBold && selectedTextFont == 'Roboto' ? '/system/fonts/Roboto-Bold.ttf' : textFontFile;
+                  filters.add('[' + previous + ']drawtext=fontfile=' + boldFont + ':text=' +
+                    "'" + safeText + "'" + ':fontcolor=' + textColor + ':fontsize=' + textSizeExpression +
+                    ':x=' + textX + ':y=' + textY + ":alpha='" + textAlpha + "':shadowcolor=black@0.8:shadowx=2:shadowy=2[' + textOutput + ']');
                   previous = textOutput;
                 }
                 if (selectedSticker.isNotEmpty) {
@@ -1428,7 +1525,7 @@ jobs:
                       ),
                     ),
                   ),
-                  if (overlayText.isNotEmpty) Positioned(left: 12, right: 12, bottom: 30, child: IgnorePointer(child: Text(overlayText, textAlign: TextAlign.center, style: TextStyle(color: selectedTextColor, fontSize: textSize, fontWeight: textBold ? FontWeight.bold : FontWeight.normal, shadows: const [Shadow(color: Colors.black87, blurRadius: 4, offset: Offset(1, 1))])))),
+                  if (overlayText.isNotEmpty) Positioned(left: 12, right: 12, bottom: 30, child: IgnorePointer(child: Text(overlayText, textAlign: TextAlign.center, style: TextStyle(fontFamily: selectedTextFontFamily, color: selectedTextColor, fontSize: textSize, fontWeight: textBold ? FontWeight.bold : FontWeight.normal, shadows: const [Shadow(color: Colors.black87, blurRadius: 4, offset: Offset(1, 1))])))),
                   if (selectedSticker.isNotEmpty) Positioned(right: 18, top: 18, child: IgnorePointer(child: Text(selectedSticker, style: const TextStyle(fontSize: 42)))),
                   for (var i = 0; i < overlays.length; i++) if (projectTime >= overlays[i].start && projectTime <= overlays[i].start + overlays[i].duration) _overlayWidget(overlays[i], i, size),
                 ]);
@@ -1625,7 +1722,16 @@ jobs:
                 case 'Text':
                   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     const Text('TEXT OVERLAY', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                    TextField(controller: textController, decoration: const InputDecoration(hintText: 'Type text for preview', isDense: true), onSubmitted: (v) => setState(() => overlayText = v)),
+                    TextField(controller: textController, decoration: const InputDecoration(hintText: 'Type text for preview', isDense: true), onChanged: (v) => setState(() => overlayText = v), onSubmitted: (v) => setState(() => overlayText = v)),
+                    const SizedBox(height: 8),
+                    const Text('PRE-DESIGNED TEMPLATES', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                    Wrap(spacing: 5, runSpacing: 4, children: textTemplateOptions.map((v) => ChoiceChip(label: Text(v, style: const TextStyle(fontSize: 10)), selected: selectedTextTemplate == v, onSelected: (_) => applyTextTemplate(v), visualDensity: VisualDensity.compact)).toList()),
+                    const SizedBox(height: 8),
+                    const Text('FONT FAMILY · 30 OPTIONS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                    DropdownButtonFormField<String>(value: selectedTextFont, isExpanded: true, decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8)), items: textFontOptions.map((v) => DropdownMenuItem(value: v, child: Text(v, style: TextStyle(fontFamily: switch (v) { 'Noto Serif' || 'Droid Serif' || 'Serif' => 'serif', 'Noto Mono' || 'Monospace' => 'monospace', 'Casual' => 'casual', 'Cursive' => 'cursive', _ => 'sans-serif' })))).toList(), onChanged: (v) => setState(() { selectedTextFont = v ?? 'Roboto'; selectedTextTemplate = 'Custom'; })),
+                    const SizedBox(height: 8),
+                    const Text('TEXT ANIMATION', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                    Wrap(spacing: 5, runSpacing: 4, children: textAnimationOptions.map((v) => ChoiceChip(label: Text(v, style: const TextStyle(fontSize: 10)), selected: textAnimationPreset == v, onSelected: (_) => setState(() => textAnimationPreset = v), visualDensity: VisualDensity.compact)).toList()),
                     Wrap(spacing: 5, children: [TextButton(onPressed: () => setState(() => overlayText = textController.text), child: const Text('Add text')), TextButton(onPressed: () => setState(() => overlayText = ''), child: const Text('Remove text'))]),
                     Wrap(spacing: 5, children: ['White','Black','Yellow','Purple','Red'].map((v) => ChoiceChip(label: Text(v), selected: textColorName == v, onSelected: (_) => setState(() => textColorName = v), visualDensity: VisualDensity.compact)).toList()),
                     Row(children: [const Text('Size', style: TextStyle(fontSize: 10)), Expanded(child: Slider(min: 12, max: 72, value: textSize, onChanged: (v) => setState(() => textSize = v))), Text('${textSize.round()}', style: const TextStyle(fontSize: 10))]),
