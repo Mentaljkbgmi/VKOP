@@ -470,6 +470,10 @@ jobs:
             final Map<Object, VideoPlayerController> overlayPlayers = {};
             final TransformationController previewTransform = TransformationController();
             final ScrollController timelineScrollController = ScrollController();
+            double timelineZoom = 55;
+            double _timelineZoomStart = 55;
+            double _timelineFocalX = 0;
+            double _timelineScrollStart = 0;
             VideoPlayerController? player;
             int selectedIndex = 0;
             int selectedOverlay = -1;
@@ -1921,7 +1925,7 @@ jobs:
             }
 
             double get totalTimelineDuration => clips.fold<double>(0, (sum, c) => sum + ((c.isVideo && c.trimEnd > c.trimStart ? c.trimEnd - c.trimStart : c.duration) / c.speed.clamp(.1, 16)));
-            double get timelinePixelsPerSecond => 55;
+            double get timelinePixelsPerSecond => timelineZoom;
 
             void followTimelinePlayhead() {
               WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2016,7 +2020,26 @@ jobs:
                 decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(9)),
                 child: Column(children: [
                   Row(children: [const Text('TIMELINE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: .8)), const Spacer(), Text('${frameTimecode(projectTime)}  •  ${exportFps} FPS', style: const TextStyle(fontSize: 9, color: Colors.black54, fontFeatures: [FontFeature.tabularFigures()])), IconButton(tooltip: 'Add keyframe', visualDensity: VisualDensity.compact, constraints: const BoxConstraints(minWidth: 30, minHeight: 28), padding: EdgeInsets.zero, onPressed: addKeyframe, icon: const Icon(Icons.add, size: 21, color: purple))]),
-                  Expanded(child: SingleChildScrollView(
+                  Expanded(child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onScaleStart: (details) {
+                      _timelineZoomStart = timelineZoom;
+                      _timelineFocalX = details.localFocalPoint.dx;
+                      _timelineScrollStart = timelineScrollController.hasClients ? timelineScrollController.offset : 0;
+                    },
+                    onScaleUpdate: (details) {
+                      if (details.pointerCount < 2) return;
+                      final nextZoom = (_timelineZoomStart * details.scale).clamp(8.0, 240.0).toDouble();
+                      final contentX = _timelineScrollStart + _timelineFocalX - 60;
+                      setState(() => timelineZoom = nextZoom);
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (!mounted || !timelineScrollController.hasClients) return;
+                        final target = (contentX * nextZoom / _timelineZoomStart + 60 - _timelineFocalX)
+                            .clamp(0.0, timelineScrollController.position.maxScrollExtent).toDouble();
+                        timelineScrollController.jumpTo(target);
+                      });
+                    },
+                    child: SingleChildScrollView(
                     controller: timelineScrollController,
                     scrollDirection: Axis.horizontal,
                     child: SizedBox(width: totalWidth, child: SingleChildScrollView(
@@ -2030,6 +2053,7 @@ jobs:
                           trackRow('AUDIO ${i + 1}', Colors.green, [audioBlocks[i]]),
                       ]),
                     )),
+                    ),
                   )),
                 ]),
               );
